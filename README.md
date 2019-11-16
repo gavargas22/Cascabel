@@ -1,4 +1,4 @@
-![alt text](cascabel.jpeg "Cascabel")
+![alt text](./cascabel.jpeg "Cascabel")
 
 # Cascabel
 
