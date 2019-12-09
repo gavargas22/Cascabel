@@ -35,3 +35,5 @@ class WaitLine():
         regime_location['start_location'] = 0.0
         regime_location['inflection_location'] = self.total_distance * \
             self.speed_regime["slow"]
+    
+    def generate_samples(self):
