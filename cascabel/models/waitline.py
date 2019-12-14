@@ -1,4 +1,9 @@
-from geojson import Muly
+from geojson import loads
+from geojson.utils import coords
+import numpy as np
+from shapely.geometry import LineString
+import pdb
+
 
 class WaitLine():
     '''
@@ -19,12 +24,13 @@ class WaitLine():
     slow speed, this implies that the car is reporting behavior of a queuing
     vehicle.
     '''
-    def __init__(self, location, sampling_path, speed_regime):
-        self.sampling_path = sampling_path
-        self.speed_regime = {
-            "slow": 0.8,
-            "fast": 0.2
-        }
+
+    def __init__(self, geojson_string, speed_regime):
+        self.sampling_path = self.decode_geojson_string(geojson_string)
+        self.speed_regime = speed_regime
+
+    def decode_geojson_string(self, geojson_string):
+        return (loads(geojson_string))
 
     def compute_regime_locations(self):
         '''
@@ -41,5 +47,12 @@ class WaitLine():
         regime_location['start_location'] = 0.0
         regime_location['inflection_location'] = self.total_distance * \
             self.speed_regime["slow"]
-    
+
+    def get_path_coordinates(self):
+        coordinates = np.array(list(coords(self.sampling_path)))
+        pdb.set_trace()
+        return(coordinates)
+
+
     def generate_samples(self):
+        return ""
