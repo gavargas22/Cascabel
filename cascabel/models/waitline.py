@@ -1,7 +1,9 @@
 from geojson import loads
 from geojson.utils import coords
-import numpy as np
+import pandas as pd
+import geopandas as gpd
 from shapely.geometry import LineString
+import utm
 import pdb
 
 
@@ -25,12 +27,14 @@ class WaitLine():
     vehicle.
     '''
 
-    def __init__(self, geojson_string, speed_regime):
-        self.sampling_path = self.decode_geojson_string(geojson_string)
+    def __init__(self, geojson_path, speed_regime):
+        # self.sampling_path = self.decode_geojson_string(geojson_string)
+        self.sampling_path = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
+        self.coordinates = self.get_dataframe()
 
-    def decode_geojson_string(self, geojson_string):
-        return (loads(geojson_string))
+    def decode_geojson_string(self, geojson_path):
+        return gpd.read_file(geojson_path)
 
     def compute_regime_locations(self):
         '''
@@ -48,11 +52,14 @@ class WaitLine():
         regime_location['inflection_location'] = self.total_distance * \
             self.speed_regime["slow"]
 
-    def get_path_coordinates(self):
-        coordinates = np.array(list(coords(self.sampling_path)))
+    def get_dataframe(self):
         pdb.set_trace()
+        coordinates = pd.DataFrame(self.sampling_path.geometry[0].coords)
+
         return(coordinates)
 
+    def get_utm_coordinates(self):
+        pass
 
-    def generate_samples(self):
-        return ""
+    def get_utm_zone(self):
+        coordsself.get_path_coordinates()

@@ -2,3 +2,6 @@ numpy
 pandas
 geojson>=2.5.0
 shapely
+pyproj
+utm
+geopandas
