@@ -9,3 +9,7 @@ waitline = WaitLine("cascabel/paths/jrz2elp/bota.geojson",
 pdb.set_trace()
 coordinates = waitline.get_path_coordinates()
 # waitline.sampling_path['features'][0]['geometry']['coordinates']
+
+
+# The whole idea is the following:
+# 1. Initialize a waitline with a path defined by expected geometry of the line.

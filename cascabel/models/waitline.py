@@ -32,6 +32,10 @@ class WaitLine():
         self.sampling_path = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
         self.coordinates = self.get_dataframe()
+        self.destiny = {
+            "line_length": 500,
+            "wait_time": 2700
+        }
 
     def decode_geojson_string(self, geojson_path):
         return gpd.read_file(geojson_path)
