@@ -73,14 +73,10 @@ class WaitLine():
             "+proj=utm +zone=13R, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
         geo_data = self.geojson_string
 
-        utm_coordinates = self.coordinates.apply(lambda x: self.convert_to_utm(x[1], x[0]), axis=1)
-        pdb.set_trace()
+        utm_coordinates = self.coordinates.apply(lambda x: P(
+            x[0], x[1]), axis=1, result_type='expand')
 
-    @classmethod
-    def convert_to_utm(self, lat, lon):
-        easting, northing, utm_zone_number, utm_zone_letter = utm.from_latlon(lat, lon)
-
-        return(easting, northing)
+        return utm_coordinates
 
     def get_utm_zone(self):
         '''
@@ -93,8 +89,6 @@ class WaitLine():
 
         return (
             {
-                "median_easting": easting,
-                "median_northing": northing,
                 "utm_zone_number": utm_zone_number,
                 "utm_zone_letter": utm_zone_letter
             }
