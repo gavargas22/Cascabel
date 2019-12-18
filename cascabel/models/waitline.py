@@ -35,6 +35,7 @@ class WaitLine():
         self.coordinates = self.get_coordinates()
         self.utm_zone = self.get_utm_zone()
         self.utm_coordinates = self.get_utm_coordinates()
+        self.utm_linestring = self.get_utm_linestring()
         self.destiny = {
             "line_length": 500,
             "wait_time": 2700
@@ -77,6 +78,11 @@ class WaitLine():
             x[0], x[1]), axis=1, result_type='expand')
 
         return utm_coordinates
+
+    def get_utm_linestring(self):
+        linestring = LineString(coordinates=self.utm_coordinates.values)
+        result = gpd.GeoDataFrame([linestring])
+        return(linestring)
 
     def get_utm_zone(self):
         '''
