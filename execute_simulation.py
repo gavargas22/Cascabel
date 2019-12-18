@@ -6,8 +6,8 @@ import pdb
 
 waitline = WaitLine("cascabel/paths/jrz2elp/bota.geojson",
                     {"slow": 0.8, "fast": 0.2})
-pdb.set_trace()
-coordinates = waitline.get_path_coordinates()
+print(waitline.utm_coordinates)
+# coordinates = waitline.get_path_coordinates()
 # waitline.sampling_path['features'][0]['geometry']['coordinates']
 
 
