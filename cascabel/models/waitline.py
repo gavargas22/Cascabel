@@ -4,6 +4,7 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import LineString
 import utm
+import pyproj
 import pdb
 
 
@@ -29,9 +30,11 @@ class WaitLine():
 
     def __init__(self, geojson_path, speed_regime):
         # self.sampling_path = self.decode_geojson_string(geojson_string)
-        self.sampling_path = self.decode_geojson_string(geojson_path)
+        self.geojson_string = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
-        self.coordinates = self.get_dataframe()
+        self.coordinates = self.get_coordinates()
+        self.utm_zone = self.get_utm_zone()
+        self.utm_coordinates = self.get_utm_coordinates()
         self.destiny = {
             "line_length": 500,
             "wait_time": 2700
@@ -56,14 +59,43 @@ class WaitLine():
         regime_location['inflection_location'] = self.total_distance * \
             self.speed_regime["slow"]
 
-    def get_dataframe(self):
-        pdb.set_trace()
-        coordinates = pd.DataFrame(self.sampling_path.geometry[0].coords)
+    def get_coordinates(self):
+        coordinates = pd.DataFrame(self.geojson_string.iloc[0].geometry.coords)
 
         return(coordinates)
 
     def get_utm_coordinates(self):
-        pass
+        '''
+        A function that reprojects decimal degree lat and long into
+        UTM northings, and eastings.
+        '''
+        P = pyproj.Proj(
+            "+proj=utm +zone=13R, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        geo_data = self.geojson_string
+
+        utm_coordinates = self.coordinates.apply(lambda x: self.convert_to_utm(x[1], x[0]), axis=1)
+        pdb.set_trace()
+
+    @classmethod
+    def convert_to_utm(self, lat, lon):
+        easting, northing, utm_zone_number, utm_zone_letter = utm.from_latlon(lat, lon)
+
+        return(easting, northing)
 
     def get_utm_zone(self):
-        coordsself.get_path_coordinates()
+        '''
+        A function that computes the UTM coordinates, and zone for the median
+        location of the dataset we are looking at
+        '''
+        median = self.coordinates.median()
+        easting, northing, utm_zone_number, \
+            utm_zone_letter = utm.from_latlon(median[1], median[0])
+
+        return (
+            {
+                "median_easting": easting,
+                "median_northing": northing,
+                "utm_zone_number": utm_zone_number,
+                "utm_zone_letter": utm_zone_letter
+            }
+        )
