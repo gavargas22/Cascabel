@@ -82,6 +82,20 @@ class WaitLine():
 
         return utm_coordinates
 
+    def get_latlon_coordinates(self):
+        '''
+        A function that reprojects decimal degree lat and long into
+        UTM northings, and eastings.
+        '''
+        P = pyproj.Proj(
+            "+proj=utm +zone=13R, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        geo_data = self.geojson_string
+
+        utm_coordinates = self.coordinates.apply(lambda x: P(
+            x[0], x[1], inverse=True), axis=1, result_type='expand')
+
+        return utm_coordinates
+
     def get_utm_linestring(self):
         linestring = LineString(coordinates=self.utm_coordinates.values)
         result = gpd.GeoDataFrame([linestring])

@@ -15,6 +15,7 @@ car = Car(sampling_rate=10, initial_state={"t": 0, "s": 0},
           transient_time_seed=5)
 
 simulation = Simulation(waitline=waitline, car=car)
+simulation()
 pdb.set_trace()
 print(waitline.compute_position_at_distance_from_start(100))
 # coordinates = waitline.get_path_coordinates()
