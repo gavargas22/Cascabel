@@ -3,6 +3,7 @@ from geojson.utils import coords
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import LineString
+import numpy as np
 import utm
 import pyproj
 import pdb
@@ -28,7 +29,7 @@ class WaitLine():
     vehicle.
     '''
 
-    def __init__(self, geojson_path, speed_regime):
+    def __init__(self, geojson_path, speed_regime, line_length_seed):
         # self.sampling_path = self.decode_geojson_string(geojson_string)
         self.geojson_string = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
@@ -38,8 +39,9 @@ class WaitLine():
         self.utm_linestring = self.get_utm_linestring()
         self.waitline_length = self.utm_linestring.length
         self.destiny = {
-            "line_length": 500,
-            "wait_time": 2700
+            "line_length": self.waitline_length * line_length_seed,
+            "wait_time": 2700,
+            "officer_wait_factor": np.random.uniform(-0.1, 0.1)
         }
 
     def decode_geojson_string(self, geojson_path):
