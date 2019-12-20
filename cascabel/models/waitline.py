@@ -36,6 +36,7 @@ class WaitLine():
         self.utm_zone = self.get_utm_zone()
         self.utm_coordinates = self.get_utm_coordinates()
         self.utm_linestring = self.get_utm_linestring()
+        self.waitline_length = self.utm_linestring.length
         self.destiny = {
             "line_length": 500,
             "wait_time": 2700
@@ -99,3 +100,14 @@ class WaitLine():
                 "utm_zone_letter": utm_zone_letter
             }
         )
+
+    def compute_position_at_distance_from_start(self, distance_from_start):
+        if distance_from_start > self.waitline_length:
+            new_position = self.utm_linestring.interpolate(
+                self.waitline_length)
+        elif distance_from_start < 0:
+            new_position = self.utm_linestring.interpolate(0)
+        else:
+            new_position = self.utm_linestring.interpolate(distance_from_start)
+
+        return new_position
