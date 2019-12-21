@@ -33,6 +33,7 @@ class WaitLine():
         # self.sampling_path = self.decode_geojson_string(geojson_string)
         self.geojson_string = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
+        self.regime_parameters = self.compute_regime_locations()
         self.coordinates = self.get_coordinates()
         self.utm_zone = self.get_utm_zone()
         self.utm_coordinates = self.get_utm_coordinates()
@@ -60,8 +61,11 @@ class WaitLine():
         }
 
         regime_location['start_location'] = 0.0
-        regime_location['inflection_location'] = self.total_distance * \
+        pdb.set_trace()
+        regime_location['inflection_location'] = self.destiny['line_length'] * \
             self.speed_regime["slow"]
+
+        return regime_location
 
     def get_coordinates(self):
         coordinates = pd.DataFrame(self.geojson_string.iloc[0].geometry.coords)
