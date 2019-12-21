@@ -15,9 +15,30 @@ class Simulation():
         self.starting_point = self.waitline\
             .compute_position_at_distance_from_start(0)
         self.location_points = []
+        
+        self.simulation_state = {
+            "running": False
+        }
+        
+        self.temporal_state ={
+            "simulation_time": 0,
+            "time_factor": 1  # 1 mean seconds, 1000 means milliseconds
+        }
 
     def __call__(self):
         print("executing simulation...")
+        
+        self.running = True
+        while self.simulation_state["running"]:
+            
+        # Start the time from 0 to n which is the time end
+        # Check if we are still within the wait line
+        # If we are in the wait line the continue
+        # Otherwise stop simulation
+        #    Get the regime that we are in
+        #    If we are in the fast regime, then we do not stop
+        #    If we are in the slow moving regime then we stop at uniform intervals
+        self.simulate_state()
         for i in range(0, int(self.total_distance)):
             current_location_point = self.waitline.\
                 compute_position_at_distance_from_start(i)
@@ -30,3 +51,9 @@ class Simulation():
         gdf.crs = {'init': 'epsg:4326'}
 
         return gdf
+    
+    def still_in_waitline(self):
+        return True
+    
+    def get_regime_parameters(self):
+        regime = self.waitline.regime

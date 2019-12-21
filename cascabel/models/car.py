@@ -25,9 +25,19 @@ class Car():
         result = value + (value * variance)
 
         return result
-
-    def insert_car_in_simulation(waitline):
-        pass
+    
+    def report_gps_position(self, parameter_list):
+        return (
+            {
+                "latitude": 0.0,
+                "longitude": 0.0
+            }
+        )
+        
+    def move(self, velocity, acceleration, interval):
+        # calculate the distance
+        distance = velocity * interval
+        
 
     # def report_position():
     #     state = Point()
