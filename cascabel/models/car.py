@@ -25,7 +25,7 @@ class Car():
         result = value + (value * variance)
 
         return result
-    
+
     def report_gps_position(self, parameter_list):
         return (
             {
@@ -34,7 +34,7 @@ class Car():
             }
         )
         
-    def move(self, velocity, acceleration, interval):
+    def move(self, velocity, acceleration, interval, sampling_rate):
         # calculate the distance
         distance = velocity * interval
         
