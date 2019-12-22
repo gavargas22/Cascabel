@@ -102,13 +102,6 @@ class WaitLine():
         )
 
     def compute_position_at_distance_from_start(self, distance_from_start):
-        #distance_from_start = max(0, min(distance_from_start, self.waitline_length))
-        if distance_from_start > self.waitline_length:
-            new_position = self.utm_linestring.interpolate(
-                self.waitline_length)
-        elif distance_from_start < 0:
-            new_position = self.utm_linestring.interpolate(0)
-        else:
-            new_position = self.utm_linestring.interpolate(distance_from_start)
-
+        distance_from_start = max(0, min(distance_from_start, self.waitline_length))
+        new_position = self.utm_linestring.interpolate(distance_from_start)
         return new_position
