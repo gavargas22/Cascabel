@@ -17,7 +17,7 @@ car = Car(sampling_rate=10,
 
 simulation = Simulation(waitline=waitline, car=car)
 simulation()
-print(waitline.compute_position_at_distance_from_start(100))
+# print(waitline.compute_position_at_distance_from_start(100))
 # coordinates = waitline.get_path_coordinates()
 # waitline.sampling_path['features'][0]['geometry']['coordinates']
 

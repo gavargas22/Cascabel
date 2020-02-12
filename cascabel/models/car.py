@@ -1,5 +1,6 @@
 from shapely.geometry import Point
 import numpy as np
+import utm
 
 
 class Car():
@@ -27,11 +28,19 @@ class Car():
 
         return result
 
-    def report_gps_position(self, parameter_list):
+    def report_gps_position(self, waitline):
+        new_position = waitline.compute_position_at_distance_from_start(
+            self.current_state["odometer"])
+        wgs_position = Point(self.convert_utm_to_latlon(new_position, waitline)[::-1])
+
         return (
             {
-                "latitude": 0.0,
-                "longitude": 0.0
+                "utm": {
+                    "northings": new_position.y,
+                    "eastings": new_position.x
+                },
+                "lat_lon": wgs_position,
+                "shapely": new_position
             }
         )
 
@@ -39,7 +48,14 @@ class Car():
         # calculate the distance
         distance = velocity * time_interval
         self.current_state["odometer"] += distance
-        print(self.current_state["odometer"])   
+
+    def convert_utm_to_latlon(self, utm_point, waitline):
+        latlon = utm.to_latlon(
+            utm_point.x, utm_point.y,
+            waitline.utm_zone["utm_zone_number"],
+            waitline.utm_zone["utm_zone_letter"])
+
+        return latlon
 
     # def report_position():
     #     state = Point()
