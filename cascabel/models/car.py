@@ -1,3 +1,7 @@
+from shapely.geometry import Point
+import numpy as np
+
+
 class Car():
     '''
     Car
@@ -7,7 +11,36 @@ class Car():
     reports its position to the server, the data reported is then
     used to generate an estimated wait time for all other users on that bridge.
     '''
-    def __init__(self, sampling_rate, total_time_spent):
+    def __init__(self, sampling_rate, initial_state, current_state,
+                 idle_time_seed, transient_time_seed):
         self.sampling_rate = sampling_rate
-        self.total_time_spent = total_time_spent
+        # Movement parameters
+        self.max_velocity_seed = 20
+        self.min_velocity_seed = 10
+        self.current_state = initial_state
+        self.initial_state = initial_state
+        self.current_state["odometer"] = 0.0
 
+    def get_varianced_value(self, value):
+        variance = np.random.uniform(-0.1, 0.1)
+        result = value + (value * variance)
+
+        return result
+
+    def report_gps_position(self, parameter_list):
+        return (
+            {
+                "latitude": 0.0,
+                "longitude": 0.0
+            }
+        )
+
+    def move(self, velocity, acceleration, time_interval):
+        # calculate the distance
+        distance = velocity * time_interval
+        self.current_state["odometer"] += distance
+        print(self.current_state["odometer"])   
+
+    # def report_position():
+    #     state = Point()
+    #     return
