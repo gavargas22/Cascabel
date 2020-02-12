@@ -33,7 +33,6 @@ class WaitLine():
         # self.sampling_path = self.decode_geojson_string(geojson_string)
         self.geojson_string = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
-        self.regime_parameters = self.compute_regime_locations()
         self.coordinates = self.get_coordinates()
         self.utm_zone = self.get_utm_zone()
         self.utm_coordinates = self.get_utm_coordinates()
@@ -44,6 +43,7 @@ class WaitLine():
             "wait_time": 2700,
             "officer_wait_factor": np.random.uniform(-0.1, 0.1)
         }
+        self.regime_parameters = self.compute_regime_locations()
 
     def decode_geojson_string(self, geojson_path):
         return gpd.read_file(geojson_path)
@@ -61,7 +61,6 @@ class WaitLine():
         }
 
         regime_location['start_location'] = 0.0
-        pdb.set_trace()
         regime_location['inflection_location'] = self.destiny['line_length'] * \
             self.speed_regime["slow"]
 

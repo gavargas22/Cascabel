@@ -19,6 +19,7 @@ class Car():
         self.min_velocity_seed = 10
         self.current_state = initial_state
         self.initial_state = initial_state
+        self.current_state["odometer"] = 0.0
 
     def get_varianced_value(self, value):
         variance = np.random.uniform(-0.1, 0.1)
@@ -33,11 +34,12 @@ class Car():
                 "longitude": 0.0
             }
         )
-        
-    def move(self, velocity, acceleration, interval, sampling_rate):
+
+    def move(self, velocity, acceleration, time_interval):
         # calculate the distance
-        distance = velocity * interval
-        
+        distance = velocity * time_interval
+        self.current_state["odometer"] += distance
+        print(self.current_state["odometer"])   
 
     # def report_position():
     #     state = Point()
