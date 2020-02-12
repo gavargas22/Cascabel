@@ -3,6 +3,7 @@ from geojson.utils import coords
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import LineString
+import numpy as np
 import utm
 import pyproj
 import pdb
@@ -28,7 +29,7 @@ class WaitLine():
     vehicle.
     '''
 
-    def __init__(self, geojson_path, speed_regime):
+    def __init__(self, geojson_path, speed_regime, line_length_seed):
         # self.sampling_path = self.decode_geojson_string(geojson_string)
         self.geojson_string = self.decode_geojson_string(geojson_path)
         self.speed_regime = speed_regime
@@ -38,9 +39,11 @@ class WaitLine():
         self.utm_linestring = self.get_utm_linestring()
         self.waitline_length = self.utm_linestring.length
         self.destiny = {
-            "line_length": 500,
-            "wait_time": 2700
+            "line_length": self.waitline_length * line_length_seed,
+            "wait_time": 2700,
+            "officer_wait_factor": np.random.uniform(-0.1, 0.1)
         }
+        self.regime_parameters = self.compute_regime_locations()
 
     def decode_geojson_string(self, geojson_path):
         return gpd.read_file(geojson_path)
@@ -58,8 +61,10 @@ class WaitLine():
         }
 
         regime_location['start_location'] = 0.0
-        regime_location['inflection_location'] = self.total_distance * \
+        regime_location['inflection_location'] = self.destiny['line_length'] * \
             self.speed_regime["slow"]
+
+        return regime_location
 
     def get_coordinates(self):
         coordinates = pd.DataFrame(self.geojson_string.iloc[0].geometry.coords)
@@ -77,6 +82,20 @@ class WaitLine():
 
         utm_coordinates = self.coordinates.apply(lambda x: P(
             x[0], x[1]), axis=1, result_type='expand')
+
+        return utm_coordinates
+
+    def get_latlon_coordinates(self):
+        '''
+        A function that reprojects decimal degree lat and long into
+        UTM northings, and eastings.
+        '''
+        P = pyproj.Proj(
+            "+proj=utm +zone=13R, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        geo_data = self.geojson_string
+
+        utm_coordinates = self.coordinates.apply(lambda x: P(
+            x[0], x[1], inverse=True), axis=1, result_type='expand')
 
         return utm_coordinates
 
