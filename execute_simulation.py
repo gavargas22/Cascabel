@@ -10,17 +10,18 @@ waitline = WaitLine(geojson_path="cascabel/paths/jrz2elp/bota.geojson",
                     speed_regime={"slow": 0.8, "fast": 0.2},
                     line_length_seed=0.5)
 
-car = Car(sampling_rate=10, initial_state={"time": 0, "position": 0},
-          current_state={"time": 0, "position": 0}, idle_time_seed=30,
+car = Car(sampling_rate=10,
+          initial_state={"time": 0, "position": 0, "speed": 10.0, "odometer": 0.0},
+          current_state={"time": 0, "position": 0, "odometer": 0.0}, idle_time_seed=30,
           transient_time_seed=5)
 
 simulation = Simulation(waitline=waitline, car=car)
 simulation()
-pdb.set_trace()
 print(waitline.compute_position_at_distance_from_start(100))
 # coordinates = waitline.get_path_coordinates()
 # waitline.sampling_path['features'][0]['geometry']['coordinates']
 
 
 # The whole idea is the following:
-# 1. Initialize a waitline with a path defined by expected geometry of the line.
+# 1. Initialize a waitline with a path defined by expected geometry of the
+# line.
