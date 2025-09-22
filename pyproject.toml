@@ -1,0 +1,19 @@
+[project]
+name = "cascabel"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "aiofiles>=24.1.0",
+    "fastapi>=0.117.1",
+    "geojson>=3.2.0",
+    "geopandas>=1.1.1",
+    "numpy>=2.3.3",
+    "pandas>=2.3.2",
+    "pydantic>=2.11.9",
+    "pyproj>=3.7.2",
+    "python-multipart>=0.0.20",
+    "shapely>=2.1.1",
+    "utm>=0.8.1",
+    "uvicorn>=0.36.0",
+    "websockets>=15.0.1",
+]
