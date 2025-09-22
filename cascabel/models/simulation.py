@@ -1,7 +1,10 @@
-import numpy as np
-from shapely.geometry import MultiPoint, LineString, Point
+from shapely.geometry import MultiPoint
 import geopandas as gpd
-import pdb
+from datetime import datetime
+from .border_crossing import BorderCrossing
+from .models import (SimulationConfig, BorderCrossingConfig,
+                     SimulationResult, BorderCrossingStats,
+                     QueueStats, ServiceNodeStats)
 
 
 class Simulation():
@@ -9,22 +12,48 @@ class Simulation():
     Simulation Model
     ----------------
 
-    This is the model that describes how the simulation
+    Multi-queue, multi-service-node border crossing simulation.
     '''
-    def __init__(self, waitline, car):
+    def __init__(self, waitline, border_config, simulation_config=None):
+        """
+        Initialize simulation.
+
+        Args:
+            waitline: WaitLine object defining the path
+            border_config: BorderCrossingConfig object
+            simulation_config: SimulationConfig object (optional)
+        """
         self.waitline = waitline
-        self.car = car
         self.total_distance = self.waitline.destiny['line_length']
-        self.total_steps = int(self.total_distance) * self.car.sampling_rate
-        self.linear_space_distance = np.linspace(0, self.total_distance,
-                                                 self.total_steps)
-        self.starting_point = self.waitline\
-            .compute_position_at_distance_from_start(0)
+
+        # Use Pydantic models for configuration
+        if isinstance(border_config, dict):
+            self.border_config = BorderCrossingConfig(**border_config)
+        else:
+            self.border_config = border_config
+
+        if simulation_config is None:
+            self.simulation_config = SimulationConfig(
+                max_simulation_time=3600.0,
+                time_factor=1.0,
+                enable_telemetry=True,
+                enable_position_tracking=True
+            )
+        elif isinstance(simulation_config, dict):
+            self.simulation_config = SimulationConfig(**simulation_config)
+        else:
+            self.simulation_config = simulation_config
+
+        # Initialize border crossing with multiple queues and service nodes
+        self.border_crossing = BorderCrossing(waitline, self.border_config)
+
         self.location_points = []
 
+        # Use simulation config values
         self.simulation_state = {
             "running": False,
-            "time_factor": 1  # 1 mean seconds, 1000 means milliseconds
+            "time_factor": self.simulation_config.time_factor,
+            "max_simulation_time": self.simulation_config.max_simulation_time
         }
 
         self.temporal_state = {
@@ -32,74 +61,98 @@ class Simulation():
             "simulation_time": 0,
         }
 
-        self.regime_parameters = self.waitline.compute_regime_locations
-
     def __call__(self):
-        print("executing simulation...")
+        print("executing multi-queue border crossing simulation...")
         self.simulation_state["running"] = True
+
         while self.simulation_state["running"]:
-            # Start the time from 0 to n which is the time end
-            # The simulation is running
             # Advance time one incremental unit
-            self.advance_time()
-            # Perform all the checks and calculations of movement
-            # Check if we are still within the wait line
-            if self.still_in_waitline:
-                # If we are in the wait line the continue passage of time
-                print("Continuing simulation")
-                # Move the car based on time interval and speed
-                self.car.move(velocity=10, acceleration=0,
-                              time_interval=self.compute_time_delta())
-            else:
-                # Otherwise stop simulation
+            dt = self.advance_time()
+
+            # Update border crossing dynamics
+            self.border_crossing.advance_time(dt)
+
+            # Check if simulation should continue
+            if not self.should_continue():
                 self.simulation_state["running"] = False
 
-            # Set a record of the previous timestamp
-            self.temporal_state["previous_simulation_time"] = \
-                self.temporal_state["simulation_time"]
+            # Record car positions for visualization
+            self.record_positions()
 
-        # Get the regime that we are in
-        # If we are in the fast regime, then we do not stop
-        # If we are in the slow moving regime then we stop at uniform
-        # intervals
-
-    def generate_point_geojson(self):
-        pdb.set_trace()
-        output = MultiPoint(self.location_points)
-        gdf = gpd.GeoSeries(output)
-        gdf.crs = {'init': 'epsg:4326'}
-
-        return gdf
-
-    def compute_time_delta(self):
-        '''
-        Compute time delta
-        ------------------
-
-        A function that calculates the elapsed times between simulation frames
-        '''
-        initial = self.temporal_state["previous_simulation_time"]
-        final = self.temporal_state["simulation_time"]
-        time_delta = final-initial
-
-        return time_delta
-
-    def still_in_waitline(self):
-        return True
-
-    def simulate_state_at(self):
-        '''
-        Function that calculates the conditions at a given tiemstamp
-        '''
-        return "Continuing"
+        stats = self.get_statistics()
+        print(f"Simulation completed. Final statistics: {stats}")
 
     def advance_time(self):
         '''
-        Arrow of time function
-        ========================
-
-        A function that continues the progression of time as in the real world
+        Advance simulation time and return time delta.
         '''
-        delta_t_amount = self.simulation_state["time_factor"] / 1
+        delta_t_amount = self.simulation_state["time_factor"]
         self.temporal_state["simulation_time"] += delta_t_amount
-        # self.temporal_state["previous_simulation_time"] += (delta_t_amount)
+        return delta_t_amount
+
+    def should_continue(self):
+        """
+        Determine if simulation should continue.
+        """
+        # Continue if under max time and have activity
+        time_check = (
+            self.temporal_state["simulation_time"] <
+            self.simulation_state["max_simulation_time"]
+        )
+
+        # Continue if there are cars in system or recent arrivals
+        total_cars = sum(
+            len(queue.cars) for queue in self.border_crossing.queues
+        )
+        activity_check = (
+            total_cars > 0 or self.temporal_state["simulation_time"] < 300
+        )
+
+        return time_check and activity_check
+
+    def record_positions(self):
+        '''
+        Record current positions of all cars for visualization.
+        '''
+        for queue in self.border_crossing.queues:
+            for car in queue.cars.values():
+                # Get GPS position along waitline
+                position_point = (
+                    self.waitline.compute_position_at_distance_from_start(
+                        car.position))
+                if position_point:
+                    self.location_points.append(position_point)
+
+    def get_statistics(self):
+        """
+        Get comprehensive simulation statistics as Pydantic model.
+
+        Returns:
+            SimulationResult: Complete simulation results
+        """
+        border_stats, queue_stats, node_stats = (
+            self.border_crossing.get_statistics()
+        )
+
+        return SimulationResult(
+            simulation_config=self.simulation_config,
+            border_config=self.border_config,
+            execution_stats=border_stats,
+            queue_stats=queue_stats,
+            node_stats=node_stats,
+            total_positions_recorded=len(self.location_points),
+            total_telemetry_records=0,  # TODO: implement telemetry tracking
+            simulation_duration=self.temporal_state["simulation_time"]
+        )
+
+    def generate_point_geojson(self):
+        '''
+        Generate GeoJSON from recorded car positions.
+        '''
+        if not self.location_points:
+            return None
+
+        output = MultiPoint(self.location_points)
+        gdf = gpd.GeoSeries(output)
+        gdf.crs = {'init': 'epsg:4326'}
+        return gdf

@@ -2,21 +2,25 @@
 Cascabel Simulation API
 ======================
 
-FastAPI server for car queue simulation with telemetry generation.
+FastAPI server for multi-queue border crossing simulation with telemetry generation.
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import uuid
 import asyncio
+import json
 
 from cascabel.models.waitline import WaitLine
-from cascabel.models.car import Car
-from cascabel.models.queuing.mm1_queue import MM1Queue
-from cascabel.simulation.telemetry.telemetry_generator import TelemetryGenerator
+from cascabel.models.simulation import Simulation
+from cascabel.models.models import (
+    BorderCrossingConfig, SimulationConfig, PhoneConfig,
+    SimulationResult, CarState, ServiceNodeState
+)
 from cascabel.simulation.csv_generator import CSVGenerator
 
 app = FastAPI(
@@ -29,41 +33,46 @@ app = FastAPI(
 simulations = {}
 
 
-class QueueConfig(BaseModel):
-    path: str = "jrz2elp/bota"
-    arrival_rate: float = 0.5  # cars per minute
-    service_rate: float = 0.8  # cars per minute
-    max_queue_length: int = 20
-
-
-class PhoneConfig(BaseModel):
-    sampling_rate: int = 10  # Hz
-    gps_noise: Dict[str, float] = {"horizontal_accuracy": 5.0, "vertical_accuracy": 3.0}
-    accelerometer_noise: float = 0.01  # m/s²
-    gyro_noise: float = 0.001  # rad/s
-    device_orientation: str = "portrait"
-
-
-class SimulationConfig(BaseModel):
-    duration: int = 3600  # seconds
-    realtime: bool = True
-
-
 class SimulationRequest(BaseModel):
-    queue_config: QueueConfig
-    phone_config: PhoneConfig
-    simulation_config: SimulationConfig
+    """Request to start a simulation."""
+    border_config: BorderCrossingConfig
+    simulation_config: Optional[SimulationConfig] = None
+    phone_config: Optional[PhoneConfig] = None
 
 
 class SimulationStatus(BaseModel):
+    """Status of a running simulation."""
     simulation_id: str
     status: str  # "running", "completed", "failed"
     progress: float
-    cars_processed: int
-    current_queue_length: int
-    start_time: Optional[datetime]
-    estimated_completion: Optional[datetime]
-    error_message: Optional[str] = None
+    current_time: float
+    total_arrivals: int
+    total_completions: int
+    message: Optional[str] = None
+
+
+async def run_simulation(simulation_id: str):
+    """
+    Run the simulation in the background.
+    """
+    sim = simulations.get(simulation_id)
+    if not sim:
+        return
+
+    try:
+        simulation = sim["simulation"]
+
+        # Run the simulation (this will block until completion)
+        simulation()
+
+        # Update final status
+        final_stats = simulation.get_statistics()
+        sim["current_time"] = final_stats.simulation_duration
+        sim["status"] = "completed"
+
+    except Exception as e:
+        sim["status"] = "failed"
+        sim["error"] = str(e)
 
 
 @app.post("/simulate", response_model=Dict[str, str])
@@ -78,29 +87,23 @@ async def start_simulation(request: SimulationRequest, background_tasks: Backgro
     # Initialize simulation
     try:
         # Create waitline
-        geojson_path = f"cascabel/paths/{request.queue_config.path}.geojson"
+        geojson_path = "cascabel/paths/jrz2elp/bota.geojson"
         waitline = WaitLine(geojson_path, {"slow": 0.8, "fast": 0.2}, line_length_seed=1.0)
 
-        # Create queue
-        queue = MM1Queue(
-            arrival_rate=request.queue_config.arrival_rate,
-            service_rate=request.queue_config.service_rate,
-            max_queue_length=request.queue_config.max_queue_length
+        # Create simulation with provided configs
+        simulation = Simulation(
+            waitline=waitline,
+            border_config=request.border_config,
+            simulation_config=request.simulation_config
         )
-
-        # Create telemetry generator
-        telemetry_gen = TelemetryGenerator(waitline, request.phone_config.__dict__)
 
         # Store simulation state
         simulations[simulation_id] = {
             "status": "running",
+            "simulation": simulation,
             "request": request,
-            "waitline": waitline,
-            "queue": queue,
-            "telemetry_gen": telemetry_gen,
             "start_time": datetime.now(),
-            "progress": 0.0,
-            "cars_processed": 0,
+            "current_time": 0.0,
             "telemetry_data": [],
             "error": None
         }
@@ -116,7 +119,10 @@ async def start_simulation(request: SimulationRequest, background_tasks: Backgro
         }
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to start simulation: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to start simulation: {str(e)}"
+        )
 
 
 @app.get("/simulation/{simulation_id}/status", response_model=SimulationStatus)
@@ -127,22 +133,25 @@ async def get_simulation_status(simulation_id: str):
 
     sim = simulations[simulation_id]
 
-    # Calculate estimated completion
-    if sim["status"] == "running":
-        total_duration = sim["request"].simulation_config.duration
-        estimated_completion = sim["start_time"] + timedelta(seconds=total_duration)
-    else:
-        estimated_completion = None
+    # Get current statistics from simulation
+    try:
+        stats = sim["simulation"].get_statistics()
+        max_time = sim["request"].simulation_config.max_simulation_time
+        progress = min(1.0, sim["current_time"] / max_time)
+    except Exception:
+        stats = None
+        progress = 0.0
 
     return SimulationStatus(
         simulation_id=simulation_id,
         status=sim["status"],
-        progress=sim["progress"],
-        cars_processed=sim["cars_processed"],
-        current_queue_length=sim["queue"].queue_length if "queue" in sim else 0,
-        start_time=sim["start_time"],
-        estimated_completion=estimated_completion,
-        error_message=sim.get("error")
+        progress=progress,
+        current_time=sim["current_time"],
+        total_arrivals=(stats.execution_stats.total_arrivals
+                       if stats else 0),
+        total_completions=(stats.execution_stats.total_completions
+                          if stats else 0),
+        message=sim.get("error")
     )
 
 
@@ -217,55 +226,132 @@ async def cancel_simulation(simulation_id: str):
     return {"simulation_id": simulation_id, "status": "cancelled"}
 
 
-async def run_simulation(simulation_id: str):
-    """
-    Run the simulation in the background.
+@app.post("/simulation/{simulation_id}/add_car")
+async def add_car_to_simulation(simulation_id: str, phone_config: Optional[PhoneConfig] = None):
+    """Add a new car to a running simulation."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
 
-    This is a simplified version. In production, this would be more sophisticated
-    with proper async handling and progress updates.
-    """
-    sim = simulations.get(simulation_id)
-    if not sim:
-        return
+    sim = simulations[simulation_id]
+    if sim["status"] != "running":
+        raise HTTPException(status_code=400, detail="Simulation is not running")
 
     try:
-        request = sim["request"]
-        queue = sim["queue"]
-        telemetry_gen = sim["telemetry_gen"]
-
-        # Generate car arrivals
-        arrival_times = queue.arrival_process.generate_arrival_times(
-            request.simulation_config.duration / 60,  # Convert to minutes
-            sim["start_time"]
+        # Add car to simulation
+        car, queue_index = sim["simulation"].border_crossing.add_car(
+            sampling_rate=phone_config.sampling_rate if phone_config else 10,
+            phone_config=phone_config.dict() if phone_config else None
         )
 
-        total_cars = len(arrival_times)
-        sim["telemetry_data"] = []
-
-        for i, arrival_time in enumerate(arrival_times):
-            # Create car
-            car = Car(f"car_{i}", request.phone_config.sampling_rate, request.phone_config.__dict__)
-
-            # Add to queue
-            if queue.add_car(car, arrival_time):
-                # Simulate car movement and generate telemetry
-                telemetry_records = telemetry_gen.generate_telemetry_for_car(
-                    car, arrival_time, 300  # 5 minutes of data per car
-                )
-                sim["telemetry_data"].extend(telemetry_records)
-
-            # Update progress
-            sim["progress"] = (i + 1) / total_cars
-            sim["cars_processed"] = i + 1
-
-            # Small delay to prevent overwhelming
-            await asyncio.sleep(0.01)
-
-        sim["status"] = "completed"
+        if car:
+            return {
+                "car_id": car.car_id,
+                "queue_id": queue_index,
+                "message": "Car added successfully"
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Failed to add car (queue full)")
 
     except Exception as e:
-        sim["status"] = "failed"
-        sim["error"] = str(e)
+        raise HTTPException(status_code=400, detail=f"Failed to add car: {str(e)}")
+
+
+@app.put("/simulation/{simulation_id}/service_node/{node_id}")
+async def update_service_node_rate(simulation_id: str, node_id: str, rate: float):
+    """Update the service rate of a specific service node."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim = simulations[simulation_id]
+    if sim["status"] != "running":
+        raise HTTPException(status_code=400, detail="Simulation is not running")
+
+    try:
+        # Find and update the service node
+        border_crossing = sim["simulation"].border_crossing
+        node_found = False
+
+        for node in border_crossing.service_nodes:
+            if node.node_id == node_id:
+                node.service_rate = rate
+                node_found = True
+                break
+
+        if not node_found:
+            raise HTTPException(status_code=404, detail="Service node not found")
+
+        return {"node_id": node_id, "new_rate": rate, "message": "Service rate updated"}
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to update service rate: {str(e)}")
+
+
+@app.get("/simulation/{simulation_id}/state")
+async def get_simulation_state(simulation_id: str):
+    """Get the current state of the simulation for real-time visualization."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim = simulations[simulation_id]
+
+    try:
+        stats = sim["simulation"].get_statistics()
+
+        # Get car positions and states
+        cars = []
+        for queue in sim["simulation"].border_crossing.queues:
+            for car_id, car in queue.cars.items():
+                cars.append({
+                    "car_id": car_id,
+                    "position": car.position,
+                    "velocity": car.velocity,
+                    "status": car.status,
+                    "queue_id": getattr(car, 'queue_id', None)
+                })
+
+        # Get service node states
+        service_nodes = []
+        for i, queue in enumerate(sim["simulation"].border_crossing.queues):
+            for node in queue.service_nodes:
+                node_state = node.get_state(i)
+                service_nodes.append(node_state.dict())
+
+        return {
+            "simulation_id": simulation_id,
+            "status": sim["status"],
+            "current_time": sim["current_time"],
+            "cars": cars,
+            "service_nodes": service_nodes,
+            "statistics": stats.dict()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get simulation state: {str(e)}")
+
+
+@app.post("/simulation/{simulation_id}/advance")
+async def advance_simulation(simulation_id: str, dt: float = 1.0):
+    """Manually advance the simulation by a time step (for testing/debugging)."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim = simulations[simulation_id]
+    if sim["status"] != "running":
+        raise HTTPException(status_code=400, detail="Simulation is not running")
+
+    try:
+        # Advance simulation time
+        completed_cars = sim["simulation"].border_crossing.advance_time(dt)
+        sim["current_time"] += dt
+
+        return {
+            "advanced_by": dt,
+            "completed_cars": len(completed_cars),
+            "current_time": sim["current_time"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to advance simulation: {str(e)}")
 
 
 @app.get("/")
@@ -276,6 +362,15 @@ async def root():
         "version": "1.0.0",
         "docs": "/docs"
     }
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 if __name__ == "__main__":
