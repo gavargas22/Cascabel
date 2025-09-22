@@ -76,8 +76,7 @@ class WaitLine():
         A function that reprojects decimal degree lat and long into
         UTM northings, and eastings.
         '''
-        P = pyproj.Proj(
-            "+proj=utm +zone=13R, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        P = pyproj.Proj("EPSG:32613")
         geo_data = self.geojson_string
 
         utm_coordinates = self.coordinates.apply(lambda x: P(
@@ -90,8 +89,7 @@ class WaitLine():
         A function that reprojects decimal degree lat and long into
         UTM northings, and eastings.
         '''
-        P = pyproj.Proj(
-            "+proj=utm +zone=13R, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        P = pyproj.Proj("EPSG:32613")
         geo_data = self.geojson_string
 
         utm_coordinates = self.coordinates.apply(lambda x: P(

@@ -1,9 +1,10 @@
 from shapely.geometry import Point
 import numpy as np
 from datetime import datetime
+from .models import PhoneConfig, CarState
 
 
-class Car():
+class Car:
     '''
     Car Model with Physics Simulation
     =================================
@@ -14,7 +15,12 @@ class Car():
     def __init__(self, car_id, sampling_rate=10, phone_config=None, initial_position=0.0):
         self.car_id = car_id
         self.sampling_rate = sampling_rate
-        self.phone_config = phone_config or {}
+
+        # Use Pydantic model for phone configuration
+        if phone_config:
+            self.phone_config = PhoneConfig(**phone_config)
+        else:
+            self.phone_config = PhoneConfig()
 
         # Physics properties (typical passenger car)
         self.mass = 1500  # kg
@@ -30,6 +36,7 @@ class Car():
 
         # Queue status
         self.status = "arriving"  # arriving, queued, serving, completed
+        self.queue_id = None
         self.arrival_time = None
         self.service_start_time = None
         self.completion_time = None
@@ -37,14 +44,57 @@ class Car():
         # Telemetry data storage
         self.telemetry_records = []
 
-        # Legacy compatibility
-        self.current_state = {
-            "time": 0,
-            "position": initial_position,
-            "speed": 0.0,
-            "odometer": 0.0
-        }
-        self.initial_state = self.current_state.copy()
+        # Telemetry generator will be initialized later with waitline
+        self.telemetry_gen = None
+
+    def set_telemetry_generator(self, waitline):
+        """
+        Initialize telemetry generator with waitline.
+
+        Args:
+            waitline: WaitLine object for path geometry
+        """
+        if self.phone_config:
+            from ..simulation.telemetry.telemetry_generator import (
+                TelemetryGenerator)
+            self.telemetry_gen = TelemetryGenerator(waitline,
+                                                    self.phone_config.dict())
+
+    def generate_telemetry(self, timestamp):
+        """
+        Generate telemetry record for current car state.
+
+        Args:
+            timestamp: Current simulation timestamp
+
+        Returns:
+            dict: Telemetry record or None if generator not available
+        """
+        if not self.telemetry_gen:
+            return None
+
+        record = self.telemetry_gen.generate_telemetry_record(self, timestamp)
+        self.telemetry_records.append(record)
+        return record
+
+    def get_state(self) -> CarState:
+        """
+        Get current car state as Pydantic model.
+
+        Returns:
+            CarState: Current car state
+        """
+        return CarState(
+            car_id=self.car_id,
+            position=self.position,
+            velocity=self.velocity,
+            acceleration=self.acceleration,
+            status=self.status,  # type: ignore
+            queue_id=self.queue_id,
+            arrival_time=self.arrival_time,
+            service_start_time=self.service_start_time,
+            completion_time=self.completion_time
+        )
 
     def update_physics(self, target_velocity, dt):
         """
@@ -59,8 +109,10 @@ class Car():
         required_acceleration = velocity_diff / dt if dt > 0 else 0
 
         # Limit acceleration/deceleration
-        max_accel = self.max_acceleration if required_acceleration >= 0 else self.max_deceleration
-        self.acceleration = np.clip(required_acceleration, self.max_deceleration, max_accel)
+        max_accel = (self.max_acceleration if required_acceleration >= 0
+                     else self.max_deceleration)
+        self.acceleration = np.clip(required_acceleration,
+                                    self.max_deceleration, max_accel)
 
         # Update velocity
         self.velocity += self.acceleration * dt
@@ -68,11 +120,6 @@ class Car():
 
         # Update position
         self.position += self.velocity * dt
-
-        # Update legacy state
-        self.current_state["position"] = self.position
-        self.current_state["speed"] = self.velocity
-        self.current_state["odometer"] = self.position
 
     def get_varianced_value(self, value):
         """Add random variance to a value (legacy method)"""
@@ -92,29 +139,32 @@ class Car():
     def move(self, velocity, acceleration, time_interval):
         """Legacy move method - updated to use physics"""
         self.update_physics(velocity, time_interval)
-        print(f"Car {self.car_id}: position={self.position:.2f}m, velocity={self.velocity:.2f}m/s")
+        print(f"Car {self.car_id}: position={self.position:.2f}m, "
+              f"velocity={self.velocity:.2f}m/s")
 
     def set_status(self, status, timestamp=None):
         """Update car status with timestamp"""
         self.status = status
         if status == "queued" and not self.arrival_time:
-            self.arrival_time = timestamp or datetime.now()
+            self.arrival_time = timestamp or datetime.now().timestamp()
         elif status == "serving" and not self.service_start_time:
-            self.service_start_time = timestamp or datetime.now()
+            self.service_start_time = timestamp or datetime.now().timestamp()
         elif status == "completed" and not self.completion_time:
-            self.completion_time = timestamp or datetime.now()
+            self.completion_time = timestamp or datetime.now().timestamp()
 
     def get_waiting_time(self):
         """Calculate total waiting time in queue"""
         if self.service_start_time and self.arrival_time:
-            return (self.service_start_time - self.arrival_time).total_seconds()
+            return self.service_start_time - self.arrival_time
         return 0.0
 
     def get_service_time(self):
         """Calculate service time (crossing time)"""
         if self.completion_time and self.service_start_time:
-            return (self.completion_time - self.service_start_time).total_seconds()
+            return (self.completion_time -
+                    self.service_start_time)
         return 0.0
 
     def __repr__(self):
-        return f"Car(id={self.car_id}, status={self.status}, pos={self.position:.1f}m, vel={self.velocity:.1f}m/s)"
+        return (f"Car(id={self.car_id}, status={self.status}, "
+                f"pos={self.position:.1f}m, vel={self.velocity:.1f}m/s)")
