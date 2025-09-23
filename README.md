@@ -110,6 +110,86 @@ scripts/                   # Utility scripts
 raw_data/                  # Real telemetry samples
 ```
 
+## Docker Setup
+
+### Prerequisites
+
+- Docker and Docker Compose installed
+- At least 4GB RAM available for containers
+
+### Quick Start with Docker:
+
+```bash
+# Start both services
+docker-compose up --build
+
+# Access:
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000
+```
+
+### Docker Commands:
+
+```bash
+# Start services
+docker-compose up -d
+
+# Stop services
+docker-compose down
+
+# Rebuild
+docker-compose up --build
+```
+
+### Development with Docker
+
+For development with hot reload:
+
+```bash
+# Start only backend
+docker-compose up backend
+
+# Start only frontend
+docker-compose up frontend
+
+# Run tests in container
+docker-compose exec backend uv run python -m unittest
+```
+
+## VSCode Debugging
+
+### Prerequisites
+
+- VSCode with Python and JavaScript/TypeScript extensions
+- Python Debugger extension (`ms-python.debugpy`)
+- Chrome Debugger extension (optional)
+
+### Debug Configurations
+
+The project includes basic debug configurations in `.vscode/launch.json`:
+
+1. **Debug API** - Debug the Python FastAPI server
+2. **Debug Frontend** - Debug the React development server
+3. **Debug Frontend in Chrome** - Debug in Chrome browser
+
+### Using Debug Configurations
+
+1. Open the project in VSCode
+2. Go to Run and Debug (Ctrl+Shift+D)
+3. Select a configuration from the dropdown
+4. Click the green play button or press F5
+
+### Debug Tasks
+
+Additional tasks are available in `.vscode/tasks.json`:
+
+- `docker-compose:up` - Start Docker services
+- `docker-compose:down` - Stop Docker services
+- `install-frontend-deps` - Install npm dependencies
+- `install-backend-deps` - Install Python dependencies
+- `start-backend` - Start backend server
+- `start-frontend` - Start frontend server
+
 ## Testing
 
 Test contained in `cascabel/tests/` can be run using the standard python library `unittest` by running the following command.

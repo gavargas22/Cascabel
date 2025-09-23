@@ -1,0 +1,10 @@
+{
+  "python.defaultInterpreterPath": "python",
+  "python.terminal.activateEnvironment": false,
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "javascript.preferences.importModuleSpecifier": "relative",
+  "editor.formatOnSave": true,
+  "eslint.workingDirectories": [
+    "frontend"
+  ]
+}
