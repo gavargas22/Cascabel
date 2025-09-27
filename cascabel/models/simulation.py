@@ -2,18 +2,24 @@ from shapely.geometry import MultiPoint
 import geopandas as gpd
 from datetime import datetime
 from .border_crossing import BorderCrossing
-from .models import (SimulationConfig, BorderCrossingConfig,
-                     SimulationResult, BorderCrossingStats,
-                     QueueStats, ServiceNodeStats)
+from .models import (
+    SimulationConfig,
+    BorderCrossingConfig,
+    SimulationResult,
+    BorderCrossingStats,
+    QueueStats,
+    ServiceNodeStats,
+)
 
 
-class Simulation():
-    '''
+class Simulation:
+    """
     Simulation Model
     ----------------
 
     Multi-queue, multi-service-node border crossing simulation.
-    '''
+    """
+
     def __init__(self, waitline, border_config, simulation_config=None):
         """
         Initialize simulation.
@@ -24,7 +30,7 @@ class Simulation():
             simulation_config: SimulationConfig object (optional)
         """
         self.waitline = waitline
-        self.total_distance = self.waitline.destiny['line_length']
+        self.total_distance = self.waitline.destiny["line_length"]
 
         # Use Pydantic models for configuration
         if isinstance(border_config, dict):
@@ -34,10 +40,10 @@ class Simulation():
 
         if simulation_config is None:
             self.simulation_config = SimulationConfig(
-                max_simulation_time=3600.0,
+                max_simulation_time=86400.0,
                 time_factor=1.0,
                 enable_telemetry=True,
-                enable_position_tracking=True
+                enable_position_tracking=True,
             )
         elif isinstance(simulation_config, dict):
             self.simulation_config = SimulationConfig(**simulation_config)
@@ -53,7 +59,7 @@ class Simulation():
         self.simulation_state = {
             "running": False,
             "time_factor": self.simulation_config.time_factor,
-            "max_simulation_time": self.simulation_config.max_simulation_time
+            "max_simulation_time": self.simulation_config.max_simulation_time,
         }
 
         self.temporal_state = {
@@ -83,9 +89,9 @@ class Simulation():
         print(f"Simulation completed. Final statistics: {stats}")
 
     def advance_time(self):
-        '''
+        """
         Advance simulation time and return time delta.
-        '''
+        """
         delta_t_amount = self.simulation_state["time_factor"]
         self.temporal_state["simulation_time"] += delta_t_amount
         return delta_t_amount
@@ -96,30 +102,26 @@ class Simulation():
         """
         # Continue if under max time and have activity
         time_check = (
-            self.temporal_state["simulation_time"] <
-            self.simulation_state["max_simulation_time"]
+            self.temporal_state["simulation_time"]
+            < self.simulation_state["max_simulation_time"]
         )
 
         # Continue if there are cars in system or recent arrivals
-        total_cars = sum(
-            len(queue.cars) for queue in self.border_crossing.queues
-        )
-        activity_check = (
-            total_cars > 0 or self.temporal_state["simulation_time"] < 300
-        )
+        total_cars = sum(len(queue.cars) for queue in self.border_crossing.queues)
+        activity_check = total_cars > 0 or self.temporal_state["simulation_time"] < 300
 
         return time_check and activity_check
 
     def record_positions(self):
-        '''
+        """
         Record current positions of all cars for visualization.
-        '''
+        """
         for queue in self.border_crossing.queues:
             for car in queue.cars.values():
                 # Get GPS position along waitline
-                position_point = (
-                    self.waitline.compute_position_at_distance_from_start(
-                        car.position))
+                position_point = self.waitline.compute_position_at_distance_from_start(
+                    car.position
+                )
                 if position_point:
                     self.location_points.append(position_point)
 
@@ -130,9 +132,7 @@ class Simulation():
         Returns:
             SimulationResult: Complete simulation results
         """
-        border_stats, queue_stats, node_stats = (
-            self.border_crossing.get_statistics()
-        )
+        border_stats, queue_stats, node_stats = self.border_crossing.get_statistics()
 
         return SimulationResult(
             simulation_config=self.simulation_config,
@@ -142,17 +142,17 @@ class Simulation():
             node_stats=node_stats,
             total_positions_recorded=len(self.location_points),
             total_telemetry_records=0,  # TODO: implement telemetry tracking
-            simulation_duration=self.temporal_state["simulation_time"]
+            simulation_duration=self.temporal_state["simulation_time"],
         )
 
     def generate_point_geojson(self):
-        '''
+        """
         Generate GeoJSON from recorded car positions.
-        '''
+        """
         if not self.location_points:
             return None
 
         output = MultiPoint(self.location_points)
         gdf = gpd.GeoSeries(output)
-        gdf.crs = {'init': 'epsg:4326'}
+        gdf.crs = {"init": "epsg:4326"}
         return gdf

@@ -1,7 +1,11 @@
 import numpy as np
 from .queue import CarQueue
-from .models import (BorderCrossingConfig, ServiceNodeState,
-                     BorderCrossingStats, ServiceNodeStats)
+from .models import (
+    BorderCrossingConfig,
+    ServiceNodeState,
+    BorderCrossingStats,
+    ServiceNodeStats,
+)
 
 
 class ServiceNode:
@@ -99,11 +103,10 @@ class ServiceNode:
             node_id=self.node_id,
             queue_id=queue_id,
             is_busy=self.is_busy,
-            current_car_id=(self.current_car.car_id
-                           if self.current_car else None),
+            current_car_id=(self.current_car.car_id if self.current_car else None),
             service_rate=self.service_rate,
             total_served=self.total_served,
-            total_service_time=self.total_service_time
+            total_service_time=self.total_service_time,
         )
 
     def __repr__(self):
@@ -147,6 +150,7 @@ class BorderCrossing:
 
         # Arrival timing
         self.next_arrival_time = 0.0
+        self.arrival_process = None  # Will be set if config has cbp_parser
 
         # Statistics
         self.total_arrivals = 0
@@ -177,9 +181,9 @@ class BorderCrossing:
             queue = CarQueue(
                 waitline=self.waitline,
                 arrival_rate=0.0,  # We'll handle arrivals centrally
-                service_rate=0.0,   # Service handled by individual nodes
+                service_rate=0.0,  # Service handled by individual nodes
                 max_queue_length=self.config.max_queue_length,
-                safe_distance=self.config.safe_distance
+                safe_distance=self.config.safe_distance,
             )
 
             # Override queue's service handling
@@ -216,23 +220,22 @@ class BorderCrossing:
         Returns:
             int: Queue index, or None if no queues available
         """
-        if self.config.queue_assignment == 'random':
+        if self.config.queue_assignment == "random":
             return np.random.choice(self.config.num_queues)
 
-        elif self.config.queue_assignment == 'shortest':
+        elif self.config.queue_assignment == "shortest":
             # Find queue with shortest length
             queue_lengths = [len(q.cars) for q in self.queues]
             min_length = min(queue_lengths)
-            candidates = [i for i, length in enumerate(queue_lengths)
-                         if length == min_length]
+            candidates = [
+                i for i, length in enumerate(queue_lengths) if length == min_length
+            ]
             return np.random.choice(candidates) if candidates else None
 
-        elif self.config.queue_assignment == 'round_robin':
+        elif self.config.queue_assignment == "round_robin":
             # Round-robin assignment
             queue_index = self.next_queue_index
-            self.next_queue_index = (
-                (self.next_queue_index + 1) % self.config.num_queues
-            )
+            self.next_queue_index = (self.next_queue_index + 1) % self.config.num_queues
             return queue_index
 
         else:
@@ -250,10 +253,21 @@ class BorderCrossing:
         # Process arrivals
         while self.current_time >= self.next_arrival_time:
             self.add_car()
-            # Schedule next arrival
-            interarrival_minutes = np.random.exponential(
-                1.0 / self.config.arrival_rate
-            )
+            # Schedule next arrival with time-varying rate
+            hour_of_day = (self.current_time / 3600) % 24
+            if 6 <= hour_of_day < 9:  # morning rush
+                current_rate = self.config.arrival_rate * 0.75
+            elif 16 <= hour_of_day < 19:  # evening rush
+                current_rate = self.config.arrival_rate * 0.9
+            elif 22 <= hour_of_day or hour_of_day < 4:  # night
+                current_rate = self.config.arrival_rate * 0.1
+            else:  # off-peak
+                current_rate = self.config.arrival_rate * 0.25
+
+            if current_rate > 0:
+                interarrival_minutes = np.random.exponential(1.0 / current_rate)
+            else:
+                interarrival_minutes = 60.0  # Fallback
             self.next_arrival_time += interarrival_minutes * 60
 
         # Update each queue's car positions
@@ -266,8 +280,11 @@ class BorderCrossing:
         # Process service completions
         completed_cars = []
         for node in self.service_nodes:
-            if (node.is_busy and node.service_completion_time and
-                    self.current_time >= node.service_completion_time):
+            if (
+                node.is_busy
+                and node.service_completion_time
+                and self.current_time >= node.service_completion_time
+            ):
                 completed_car = node.complete_service(self.current_time)
                 if completed_car:
                     completed_cars.append(completed_car)
@@ -286,9 +303,7 @@ class BorderCrossing:
             return
 
         # Find available service nodes for this queue
-        available_nodes = [
-            node for node in queue.service_nodes if node.is_available()
-        ]
+        available_nodes = [node for node in queue.service_nodes if node.is_available()]
 
         if not available_nodes:
             return  # No available nodes
@@ -320,42 +335,49 @@ class BorderCrossing:
         for i, queue in enumerate(self.queues):
             for node in queue.service_nodes:
                 n_state = node.get_state(i)
-                node_stats.append(ServiceNodeStats(
-                    node_id=n_state.node_id,
-                    queue_id=n_state.queue_id,
-                    service_rate=n_state.service_rate,
-                    total_served=n_state.total_served,
-                    total_service_time=n_state.total_service_time,
-                    utilization=n_state.utilization,
-                    average_service_time=(
-                        n_state.total_service_time / n_state.total_served
-                        if n_state.total_served > 0 else 0.0
+                node_stats.append(
+                    ServiceNodeStats(
+                        node_id=n_state.node_id,
+                        queue_id=n_state.queue_id,
+                        service_rate=n_state.service_rate,
+                        total_served=n_state.total_served,
+                        total_service_time=n_state.total_service_time,
+                        utilization=n_state.utilization,
+                        average_service_time=(
+                            n_state.total_service_time / n_state.total_served
+                            if n_state.total_served > 0
+                            else 0.0
+                        ),
                     )
-                ))
+                )
 
-        return BorderCrossingStats(
-            total_arrivals=self.total_arrivals,
-            total_completions=self.total_completions,
-            current_time=self.current_time,
-            num_queues=self.config.num_queues,
-            total_service_nodes=len(self.service_nodes),
-            queue_assignment_strategy=self.config.queue_assignment,
-            overall_utilization=self._calculate_overall_utilization(),
-            throughput=(self.total_completions / (self.current_time / 60)
-                      if self.current_time > 0 else 0.0)
-        ), queue_stats, node_stats
+        return (
+            BorderCrossingStats(
+                total_arrivals=self.total_arrivals,
+                total_completions=self.total_completions,
+                current_time=self.current_time,
+                num_queues=self.config.num_queues,
+                total_service_nodes=len(self.service_nodes),
+                queue_assignment_strategy=self.config.queue_assignment,
+                overall_utilization=self._calculate_overall_utilization(),
+                throughput=(
+                    self.total_completions / (self.current_time / 60)
+                    if self.current_time > 0
+                    else 0.0
+                ),
+            ),
+            queue_stats,
+            node_stats,
+        )
 
     def _calculate_overall_utilization(self):
         """Calculate overall system utilization."""
-        total_busy_nodes = sum(
-            1 for node in self.service_nodes if node.is_busy
-        )
-        return (
-            total_busy_nodes / len(self.service_nodes)
-            if self.service_nodes else 0.0
-        )
+        total_busy_nodes = sum(1 for node in self.service_nodes if node.is_busy)
+        return total_busy_nodes / len(self.service_nodes) if self.service_nodes else 0.0
 
     def __repr__(self):
-        return (f"BorderCrossing(queues={self.config.num_queues}, "
-                f"nodes={len(self.service_nodes)}, "
-                f"arrivals={self.total_arrivals})")
+        return (
+            f"BorderCrossing(queues={self.config.num_queues}, "
+            f"nodes={len(self.service_nodes)}, "
+            f"arrivals={self.total_arrivals})"
+        )
