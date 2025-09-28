@@ -28,7 +28,7 @@ test('renders canvas for map visualization', () => {
 test('establishes WebSocket connection on mount', () => {
   const simulationId = 'test-sim-123';
   render(<MapviewPanel simulationId={simulationId} />);
-  expect(global.WebSocket).toHaveBeenCalledWith(`ws://localhost:8001/ws/${simulationId}`);
+  expect(global.WebSocket).toHaveBeenCalledWith(`ws://localhost:8000/ws/${simulationId}`);
 });
 
 test('displays live metrics', () => {
