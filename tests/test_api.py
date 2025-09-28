@@ -213,6 +213,44 @@ class TestAPI(unittest.TestCase):
         self.assertIsInstance(data["service_nodes"], list)
         self.assertIsInstance(data["statistics"], dict)
 
+    def test_get_border_crossings(self):
+        """Test getting list of available border crossings"""
+        response = self.client.get("/border-crossings")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("crossings", data)
+        self.assertIsInstance(data["crossings"], list)
+        # Should include bota crossing
+        crossing_ids = [c["id"] for c in data["crossings"]]
+        self.assertIn("bota", crossing_ids)
+
+    def test_load_border_crossing(self):
+        """Test loading a specific border crossing"""
+        response = self.client.post("/border-crossings/bota/load")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("status", data)
+        self.assertEqual(data["status"], "loaded")
+        self.assertIn("polygon_bounds", data)
+        self.assertIn("start_point", data)
+        self.assertIn("stop_point", data)
+
+    def test_load_nonexistent_crossing(self):
+        """Test loading a non-existent border crossing"""
+        response = self.client.post("/border-crossings/nonexistent/load")
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_simulation_config_with_bounds(self):
+        """Test getting simulation config including boundary info"""
+        # First load a crossing
+        self.client.post("/border-crossings/bota/load")
+
+        response = self.client.get("/simulations/config")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        # Should include boundary information
+        self.assertIn("bounds", data)
+
 
 if __name__ == "__main__":
     unittest.main()

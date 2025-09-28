@@ -6,10 +6,8 @@ from .models import (
     SimulationConfig,
     BorderCrossingConfig,
     SimulationResult,
-    BorderCrossingStats,
-    QueueStats,
-    ServiceNodeStats,
 )
+from cascabel.utils.bounding_validator import constrain_point_to_bounds
 
 
 class Simulation:
@@ -21,7 +19,12 @@ class Simulation:
     """
 
     def __init__(
-        self, waitline, border_config, simulation_config=None, phone_config=None
+        self,
+        waitline,
+        border_config,
+        simulation_config=None,
+        phone_config=None,
+        bounds_polygon=None,
     ):
         """
         Initialize simulation.
@@ -31,8 +34,10 @@ class Simulation:
             border_config: BorderCrossingConfig object
             simulation_config: SimulationConfig object (optional)
             phone_config: PhoneConfig object for telemetry (optional)
+            bounds_polygon: Shapely Polygon for bounding area (optional)
         """
         self.waitline = waitline
+        self.bounds_polygon = bounds_polygon
         self.total_distance = self.waitline.destiny["line_length"]
         self.phone_config = phone_config
         self.start_time = datetime.now()  # Record when simulation starts
@@ -132,6 +137,11 @@ class Simulation:
                 position_point = self.waitline.compute_position_at_distance_from_start(
                     car.position
                 )
+                if position_point and self.bounds_polygon:
+                    # Constrain position to bounds
+                    position_point = constrain_point_to_bounds(
+                        position_point, self.bounds_polygon
+                    )
                 if position_point:
                     self.location_points.append(position_point)
 
