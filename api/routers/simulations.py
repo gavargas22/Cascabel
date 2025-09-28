@@ -17,6 +17,7 @@ from cascabel.models.border_crossing import ServiceNode
 from cascabel.models.simulation import Simulation
 from cascabel.models.models import BorderCrossingConfig, SimulationConfig, PhoneConfig
 from cascabel.simulation.csv_generator import CSVGenerator
+from cascabel.utils.geojson_loader import GeoJSONLoader
 from ..shared import simulations, websockets
 
 router = APIRouter()
@@ -673,3 +674,84 @@ async def websocket_endpoint(websocket: WebSocket, simulation_id: str):
     finally:
         if simulation_id in websockets and websocket in websockets[simulation_id]:
             websockets[simulation_id].remove(websocket)
+
+
+# Global variable to store loaded GeoJSON data
+loaded_geojson = {}
+
+
+@router.get("/border-crossings")
+async def get_border_crossings():
+    """Get list of available border crossing GeoJSON files."""
+    import os
+
+    crossings = []
+
+    # Scan for geojson files in paths
+    for root, dirs, files in os.walk("cascabel/paths"):
+        for file in files:
+            if file.endswith(".geojson"):
+                # Extract crossing info from path
+                # Use os.path operations for cross-platform compatibility
+                rel_path = os.path.relpath(root, "cascabel/paths")
+                parts = rel_path.split(os.sep)
+                if len(parts) >= 1:
+                    direction = parts[0]  # mx2usa, usa2mx, etc.
+                    crossing_id = file.replace(".geojson", "")
+                    name = f"{crossing_id} ({direction})".replace("_", " ").title()
+
+                    crossings.append(
+                        {"id": crossing_id, "name": name, "direction": direction}
+                    )
+
+    return {"crossings": crossings}
+
+
+@router.post("/border-crossings/{crossing_id}/load")
+async def load_border_crossing(crossing_id: str):
+    """Load and validate a specific border crossing GeoJSON file."""
+    import os
+
+    # Find the geojson file
+    geojson_path = None
+    for root, dirs, files in os.walk("cascabel/paths"):
+        for file in files:
+            if file == f"{crossing_id}.geojson":
+                geojson_path = os.path.join(root, file)
+                break
+        if geojson_path:
+            break
+
+    if not geojson_path:
+        raise HTTPException(status_code=404, detail="Border crossing not found")
+
+    try:
+        loader = GeoJSONLoader(geojson_path)
+        # Store in global cache
+        loaded_geojson[crossing_id] = loader
+
+        return {
+            "status": "loaded",
+            "polygon_bounds": loader.polygon_utm.wkt,
+            "start_point": [loader.start_point_utm.x, loader.start_point_utm.y],
+            "stop_point": [loader.stop_point_utm.x, loader.stop_point_utm.y],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid GeoJSON: {str(e)}")
+
+
+@router.get("/simulations/config")
+async def get_simulation_config():
+    """Get current simulation configuration including loaded boundary info."""
+    config = {"available_geojson": list(loaded_geojson.keys()), "bounds": {}}
+
+    # Include loaded boundary information
+    for crossing_id, loader in loaded_geojson.items():
+        config["bounds"][crossing_id] = {
+            "utm_epsg": loader.utm_epsg_code,
+            "polygon_wkt": loader.polygon_utm.wkt,
+            "start_point": [loader.start_point_utm.x, loader.start_point_utm.y],
+            "stop_point": [loader.stop_point_utm.x, loader.stop_point_utm.y],
+        }
+
+    return config
