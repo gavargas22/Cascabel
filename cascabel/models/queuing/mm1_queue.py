@@ -13,7 +13,9 @@ class MM1Queue:
     and exponential service times.
     """
 
-    def __init__(self, arrival_rate, service_rate, max_queue_length=50):
+    def __init__(
+        self, arrival_rate, service_rate, max_queue_length=50, cbp_parser=None
+    ):
         """
         Initialize M/M/1 queue.
 
@@ -21,9 +23,10 @@ class MM1Queue:
             arrival_rate: Average arrival rate (cars/minute)
             service_rate: Average service rate (cars/minute)
             max_queue_length: Maximum cars allowed in queue
+            cbp_parser: CBPFeedParser instance for real-time data (optional)
         """
-        self.arrival_process = ArrivalProcess(arrival_rate)
-        self.service_process = ServiceProcess(service_rate)
+        self.arrival_process = ArrivalProcess(arrival_rate, cbp_parser)
+        self.service_process = ServiceProcess(service_rate, cbp_parser=cbp_parser)
         self.max_queue_length = max_queue_length
 
         # Queue state
@@ -59,15 +62,17 @@ class MM1Queue:
     def theoretical_average_queue_length(self):
         """Calculate theoretical average queue length L = ρ/(1-ρ)"""
         if not self.is_stable:
-            return float('inf')
+            return float("inf")
         rho = self.utilization
         return rho / (1 - rho)
 
     def theoretical_average_waiting_time(self):
         """Calculate theoretical average waiting time W = 1/(μ-λ)"""
         if not self.is_stable:
-            return float('inf')
-        return 1.0 / (self.service_process.service_rate - self.arrival_process.arrival_rate)
+            return float("inf")
+        return 1.0 / (
+            self.service_process.service_rate - self.arrival_process.arrival_rate
+        )
 
     def add_car(self, car, arrival_time):
         """
@@ -125,11 +130,11 @@ class MM1Queue:
         self.total_departures += 1
 
         return {
-            'car': car,
-            'arrival_time': arrival_time,
-            'waiting_time': waiting_time,
-            'service_time': service_time,
-            'departure_time': departure_time
+            "car": car,
+            "arrival_time": arrival_time,
+            "waiting_time": waiting_time,
+            "service_time": service_time,
+            "departure_time": departure_time,
         }
 
     def get_queue_statistics(self):
@@ -144,20 +149,22 @@ class MM1Queue:
         else:
             waiting_times = []
             for i, start_time in enumerate(self.service_start_times):
-                arrival_time = self.arrival_times[i] if i < len(self.arrival_times) else start_time
+                arrival_time = (
+                    self.arrival_times[i] if i < len(self.arrival_times) else start_time
+                )
                 waiting_times.append((start_time - arrival_time).total_seconds() / 60)
             avg_waiting_time = np.mean(waiting_times) if waiting_times else 0.0
 
         return {
-            'current_queue_length': self.queue_length,
-            'total_arrivals': self.total_arrivals,
-            'total_departures': self.total_departures,
-            'balked_cars': self.balked_cars,
-            'server_utilization': self.utilization,
-            'average_waiting_time': avg_waiting_time,
-            'theoretical_avg_queue_length': self.theoretical_average_queue_length(),
-            'theoretical_avg_waiting_time': self.theoretical_average_waiting_time(),
-            'is_stable': self.is_stable
+            "current_queue_length": self.queue_length,
+            "total_arrivals": self.total_arrivals,
+            "total_departures": self.total_departures,
+            "balked_cars": self.balked_cars,
+            "server_utilization": self.utilization,
+            "average_waiting_time": avg_waiting_time,
+            "theoretical_avg_queue_length": (self.theoretical_average_queue_length()),
+            "theoretical_avg_waiting_time": (self.theoretical_average_waiting_time()),
+            "is_stable": self.is_stable,
         }
 
     def reset(self):
