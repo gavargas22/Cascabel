@@ -42,7 +42,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ simulationId }) => {
   const downloadTelemetry = async () => {
     if (!simulationId) return;
     try {
-      const response = await fetch(`http://localhost:8001/simulation/${simulationId}/telemetry`);
+      const response = await fetch(`${api.WS_BASE_URL.replace('ws', 'http')}/simulation/${simulationId}/telemetry`);
       if (!response.ok) {
         throw new Error('Failed to download telemetry');
       }

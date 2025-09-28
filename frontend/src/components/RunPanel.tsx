@@ -56,7 +56,7 @@ const RunPanel: React.FC<RunPanelProps> = ({ borderConfig, simulationConfig, pho
   const cancelSimulation = async () => {
     if (!simulationId) return;
     try {
-      await fetch(`http://localhost:8001/simulation/${simulationId}`, { method: 'DELETE' });
+      await fetch(`${api.WS_BASE_URL.replace('ws', 'http')}/simulation/${simulationId}`, { method: 'DELETE' });
       setStatus(prev => prev ? { ...prev, status: 'cancelled' } : null);
       setSimulationId(null);
     } catch (err) {
@@ -66,7 +66,7 @@ const RunPanel: React.FC<RunPanelProps> = ({ borderConfig, simulationConfig, pho
 
   useEffect(() => {
     if (simulationId && status?.status === 'running') {
-      const ws = new WebSocket(`ws://localhost:8001/ws/${simulationId}`);
+      const ws = new WebSocket(`${api.WS_BASE_URL}/ws/${simulationId}`);
 
       ws.onopen = () => {
         console.log('WebSocket connected');
