@@ -13,8 +13,14 @@ class CarQueue:
     arrival/service processes, and queue dynamics.
     """
 
-    def __init__(self, waitline, arrival_rate=2.0, service_rate=3.0,
-                 max_queue_length=50, safe_distance=10.0):
+    def __init__(
+        self,
+        waitline,
+        arrival_rate=2.0,
+        service_rate=3.0,
+        max_queue_length=50,
+        safe_distance=10.0,
+    ):
         """
         Initialize car queue.
 
@@ -30,9 +36,7 @@ class CarQueue:
 
         # Initialize queuing theory model (skip if arrival_rate is 0)
         if arrival_rate > 0:
-            self.mm1_queue = MM1Queue(
-                arrival_rate, service_rate, max_queue_length
-            )
+            self.mm1_queue = MM1Queue(arrival_rate, service_rate, max_queue_length)
         else:
             self.mm1_queue = None
 
@@ -96,9 +100,7 @@ class CarQueue:
             # Update queue statistics
             if self.mm1_queue:
                 self.mm1_queue.total_departures += 1
-                self.mm1_queue.departure_times.append(
-                    self.mm1_queue.current_time
-                )
+                self.mm1_queue.departure_times.append(self.mm1_queue.current_time)
 
             # Clear serving car if this was it
             if self.serving_car and self.serving_car.car_id == car_id:
@@ -114,8 +116,8 @@ class CarQueue:
         if not self.car_positions:
             return
 
-        # Sort cars by position (closest to front first)
-        sorted_cars = sorted(self.cars.values(), key=lambda c: c.position)
+        # Sort cars by position (front of queue first)
+        sorted_cars = sorted(self.cars.values(), key=lambda c: c.position, reverse=True)
 
         # Update each car's target velocity based on position in queue
         for i, car in enumerate(sorted_cars):
@@ -127,14 +129,12 @@ class CarQueue:
                 target_velocity = 0.0
             else:
                 # Following cars maintain safe distance
-                front_car = sorted_cars[i-1]
-                distance_to_front = (front_car.position - car.position -
-                                     front_car.length)
+                front_car = sorted_cars[i - 1]
+                distance_to_front = front_car.position - car.position - front_car.length
 
                 if distance_to_front > self.safe_distance:
                     # Can speed up
-                    target_velocity = min(car.max_velocity,
-                                          front_car.velocity * 1.1)
+                    target_velocity = min(car.max_velocity, front_car.velocity * 1.1)
                 elif distance_to_front < self.safe_distance * 0.8:
                     # Too close, slow down
                     target_velocity = max(0, front_car.velocity * 0.9)
@@ -169,8 +169,7 @@ class CarQueue:
                 )
 
                 # Record service start
-                self.mm1_queue.service_start_times.append(
-                    self.mm1_queue.current_time)
+                self.mm1_queue.service_start_times.append(self.mm1_queue.current_time)
 
     def advance_time(self, dt):
         """
@@ -185,9 +184,7 @@ class CarQueue:
             # Process arrivals (only if not handled centrally)
             while self.mm1_queue.current_time >= self.next_arrival_time:
                 self.add_car()
-                self.mm1_queue.arrival_times.append(
-                    self.mm1_queue.current_time
-                )
+                self.mm1_queue.arrival_times.append(self.mm1_queue.current_time)
                 # Schedule next arrival
                 interarrival_minutes = (
                     self.mm1_queue.arrival_process.generate_interarrival_time()
@@ -195,8 +192,11 @@ class CarQueue:
                 self.next_arrival_time += interarrival_minutes * 60
 
             # Process service completions
-            if (self.serving_car and self.service_completion_time and
-                    self.mm1_queue.current_time >= self.service_completion_time):
+            if (
+                self.serving_car
+                and self.service_completion_time
+                and self.mm1_queue.current_time >= self.service_completion_time
+            ):
                 self.remove_car(self.serving_car.car_id)
                 self.service_completion_time = None
                 self.start_service()
@@ -217,13 +217,9 @@ class CarQueue:
         utilization = self.mm1_queue.utilization if self.mm1_queue else 0.0
         busy_nodes = sum(1 for node in self.service_nodes if node.is_busy)
         total_arrivals = (
-            self.mm1_queue.total_arrivals
-            if self.mm1_queue else len(self.cars)
+            self.mm1_queue.total_arrivals if self.mm1_queue else len(self.cars)
         )
-        total_completions = (
-            self.mm1_queue.total_departures
-            if self.mm1_queue else 0
-        )
+        total_completions = self.mm1_queue.total_departures if self.mm1_queue else 0
 
         return QueueStats(
             queue_id=queue_id,
@@ -234,7 +230,7 @@ class CarQueue:
             utilization=utilization,
             average_wait_time=float(self._calculate_average_wait_time()),
             total_arrivals=total_arrivals,
-            total_completions=total_completions
+            total_completions=total_completions,
         )
 
     def _calculate_average_wait_time(self):
@@ -262,13 +258,9 @@ class CarQueue:
         """
         busy_nodes = sum(1 for node in self.service_nodes if node.is_busy)
         total_arrivals = (
-            self.mm1_queue.total_arrivals
-            if self.mm1_queue else len(self.cars)
+            self.mm1_queue.total_arrivals if self.mm1_queue else len(self.cars)
         )
-        total_completions = (
-            self.mm1_queue.total_departures
-            if self.mm1_queue else 0
-        )
+        total_completions = self.mm1_queue.total_departures if self.mm1_queue else 0
 
         return QueueState(
             queue_id=queue_id,
@@ -277,9 +269,9 @@ class CarQueue:
             busy_nodes=busy_nodes,
             num_service_nodes=len(self.service_nodes),
             total_arrivals=total_arrivals,
-            total_completions=total_completions
+            total_completions=total_completions,
         )
 
     def __repr__(self):
-        serving_id = (self.serving_car.car_id if self.serving_car else None)
+        serving_id = self.serving_car.car_id if self.serving_car else None
         return f"CarQueue(cars={len(self.cars)}, serving={serving_id})"

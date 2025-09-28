@@ -8,7 +8,6 @@ with telemetry generation.
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import json
 import asyncio
 
 from .shared import simulations
@@ -42,21 +41,53 @@ async def websocket_endpoint(websocket: WebSocket, simulation_id: str):
         while True:
             if simulation_id in simulations:
                 sim = simulations[simulation_id]
-                # Send current state (batched for efficiency)
+                simulation_obj = sim["simulation"]
+                
+                # Get all cars with their positions
+                cars_data = []
+                for queue in simulation_obj.border_crossing.queues:
+                    for car in queue.cars.values():
+                        cars_data.append({
+                            "car_id": car.car_id,
+                            "position": car.position,
+                            "velocity": car.velocity,
+                            "status": car.status,
+                            "queue_id": car.queue_id
+                        })
+                
+                # Get service nodes status
+                service_nodes_data = []
+                for node in simulation_obj.border_crossing.service_nodes:
+                    service_nodes_data.append({
+                        "node_id": node.node_id,
+                        "is_busy": node.is_busy,
+                        "current_car_id": (
+                            node.current_car.car_id
+                            if node.current_car else None
+                        ),
+                        "queue_id": node.queue_id
+                    })
+                
+                # Send comprehensive update
                 data = {
-                    "type": "update",
+                    "type": "simulation_update",
                     "simulation_id": simulation_id,
                     "status": sim["status"],
                     "current_time": sim["current_time"],
-                    "cars_count": len(sim["simulation"].border_crossing.get_all_cars()),
-                    "service_nodes": len(
-                        sim["simulation"].border_crossing.service_nodes
+                    "time_factor": (
+                        simulation_obj.simulation_config.time_factor
                     ),
+                    "cars": cars_data,
+                    "service_nodes": service_nodes_data,
+                    "total_cars": len(cars_data),
+                    "active_nodes": sum(
+                        1 for node in service_nodes_data if node["is_busy"]
+                    )
                 }
                 await websocket.send_json(data)
 
-            # Wait before next update (reduced frequency for efficiency)
-            await asyncio.sleep(2.0)  # 2 second updates for performance
+            # Wait before next update (1 second for near-realtime)
+            await asyncio.sleep(1.0)
 
     except WebSocketDisconnect:
         pass
