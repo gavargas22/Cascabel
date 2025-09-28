@@ -10,7 +10,7 @@ import { api } from './services/api';
 import QueueVisualization from './components/QueueVisualization';
 import CarTelemetryDashboard from './components/CarTelemetryDashboard';
 import ControlPanel from './components/ControlPanel';
-import MapView from './components/MapView';
+import RealtimeMapView from './components/RealtimeMapView';
 import { Card, H1, Alert, Spinner, Callout, H2 } from '@blueprintjs/core';
 import './App.css';
 
@@ -21,6 +21,8 @@ function App() {
   const [selectedCarId, setSelectedCarId] = useState<number | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [wsConnection, setWsConnection] = useState<WebSocket | null>(null);
+  const [timeSpeed, setTimeSpeed] = useState<number>(1.0);
 
   // Default configuration
   const defaultBorderConfig: BorderCrossingConfig = {
@@ -40,31 +42,66 @@ function App() {
     enable_position_tracking: true
   };
 
-  // Poll for simulation updates
+  // WebSocket connection for real-time updates
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    if (simulationId && simulationStatus?.status === 'running') {
-      interval = setInterval(async () => {
+    if (simulationId) {
+      const ws = new WebSocket(`ws://localhost:8001/ws/${simulationId}`);
+      
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        setWsConnection(ws);
+      };
+      
+      ws.onmessage = (event) => {
         try {
-          const [status, state] = await Promise.all([
-            api.getSimulationStatus(simulationId),
-            api.getSimulationState(simulationId)
-          ]);
-          setSimulationStatus(status);
-          setSimulationState(state);
+          const data = JSON.parse(event.data);
+          if (data.type === 'simulation_update') {
+            // Update simulation status
+            setSimulationStatus({
+              simulation_id: data.simulation_id,
+              status: data.status,
+              progress: 0, // Calculate if needed
+              current_time: data.current_time,
+              total_arrivals: data.total_cars,
+              total_completions: 0, // Not provided in WS data
+              message: undefined
+            });
+            
+            // Update simulation state
+            setSimulationState({
+              simulation_id: data.simulation_id,
+              status: data.status,
+              current_time: data.current_time,
+              cars: data.cars,
+              service_nodes: data.service_nodes,
+              statistics: {
+                throughput: 0, // Not provided
+                average_wait_time: 0,
+                average_service_time: 0,
+                utilization: 0
+              }
+            });
+          }
         } catch (err) {
-          console.error('Failed to update simulation:', err);
+          console.error('Failed to parse WebSocket message:', err);
         }
-      }, 1000); // Update every second
+      };
+      
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setError('WebSocket connection error');
+      };
+      
+      ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        setWsConnection(null);
+      };
+      
+      return () => {
+        ws.close();
+      };
     }
-
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [simulationId, simulationStatus?.status]);
+  }, [simulationId]);
 
   const handleStartSimulation = async () => {
     setIsLoading(true);
@@ -117,7 +154,7 @@ function App() {
 
     try {
       await api.addCar(simulationId, phoneConfig);
-      // State will be updated by the polling effect
+      // State will be updated by the WebSocket connection
     } catch (err) {
       throw err; // Let ControlPanel handle the error
     }
@@ -128,7 +165,7 @@ function App() {
 
     try {
       await api.updateServiceNodeRate(simulationId, nodeId, rate);
-      // State will be updated by the polling effect
+      // State will be updated by the WebSocket connection
     } catch (err) {
       throw err; // Let ControlPanel handle the error
     }
@@ -136,6 +173,18 @@ function App() {
 
   const handleCarSelect = (carId: number) => {
     setSelectedCarId(carId);
+  };
+
+  const handleAddStation = async (position: [number, number]) => {
+    if (!simulationId) return;
+
+    try {
+      await api.addServiceStation(simulationId, 0); // Add to first queue for now
+      // Could update local state or wait for WebSocket update
+    } catch (err) {
+      console.error('Failed to add station:', err);
+      setError('Failed to add service station');
+    }
   };
 
   return (
@@ -176,10 +225,14 @@ function App() {
               onCarSelect={handleCarSelect}
             />
 
-            <MapView
+            <RealtimeMapView
               cars={simulationState.cars}
               selectedCarId={selectedCarId}
               onCarSelect={handleCarSelect}
+              timeSpeed={timeSpeed}
+              onTimeSpeedChange={setTimeSpeed}
+              onAddStation={handleAddStation}
+              simulationId={simulationId}
             />
 
             <CarTelemetryDashboard
