@@ -5,7 +5,7 @@ Simulation API Router
 FastAPI router for border crossing simulation endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 
 from cascabel.models.waitline import WaitLine
-from cascabel.models.border_crossing import BorderCrossing
+from cascabel.models.border_crossing import ServiceNode
 from cascabel.models.simulation import Simulation
 from cascabel.models.models import BorderCrossingConfig, SimulationConfig, PhoneConfig
 from cascabel.simulation.csv_generator import CSVGenerator
@@ -45,6 +45,10 @@ class SimulationStatus(BaseModel):
 
 class UpdateRate(BaseModel):
     rate: float
+
+
+class TimeSpeedUpdate(BaseModel):
+    time_factor: float
 
 
 async def run_simulation(simulation_id: str):
@@ -497,3 +501,47 @@ async def get_visualization_data(simulation_id: str, timestamp: Optional[float] 
         raise HTTPException(
             status_code=500, detail=f"Failed to get visualization data: {str(e)}"
         )
+
+
+@router.put("/simulation/{simulation_id}/time_speed")
+async def update_time_speed(simulation_id: str, update: TimeSpeedUpdate):
+    """Update the simulation time speed multiplier."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim_data = simulations[simulation_id]
+    sim_data["simulation"].simulation_config.time_factor = update.time_factor
+    sim_data["simulation"].simulation_state["time_factor"] = update.time_factor
+
+    return {"status": "updated", "time_factor": update.time_factor}
+
+
+@router.post("/simulation/{simulation_id}/add_station")
+async def add_service_station(simulation_id: str, queue_id: int = Query(0)):
+    """Add a new service station to the specified queue."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim_data = simulations[simulation_id]
+    border_crossing = sim_data["simulation"].border_crossing
+
+    # Add new service node to the specified queue
+    if queue_id >= len(border_crossing.queues):
+        raise HTTPException(status_code=400, detail="Invalid queue ID")
+
+    queue = border_crossing.queues[queue_id]
+    
+    # Create new service node
+    node_id = f"q{queue_id}_n{len(queue.service_nodes)}"
+    service_rate = 3.0  # Default service rate
+    new_node = ServiceNode(node_id, service_rate)
+    
+    # Add to queue and border crossing
+    queue.service_nodes.append(new_node)
+    border_crossing.service_nodes.append(new_node)
+
+    return {
+        "station_id": node_id,
+        "queue_id": queue_id,
+        "service_rate": service_rate
+    }

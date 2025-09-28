@@ -165,4 +165,32 @@ export const api = {
 
     return response.json();
   },
+
+  // Update simulation time speed
+  updateTimeSpeed: async (simulationId: string, timeFactor: number): Promise<{ status: string; time_factor: number }> => {
+    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/time_speed`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ time_factor: timeFactor }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to update time speed: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // Add service station
+  addServiceStation: async (simulationId: string, queueId?: number): Promise<{ station_id: string; queue_id: number; service_rate: number }> => {
+    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/add_station${queueId !== undefined ? `?queue_id=${queueId}` : ''}`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to add service station: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
 };
