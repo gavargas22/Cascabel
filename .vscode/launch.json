@@ -5,7 +5,7 @@
       "name": "Debug API",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/api/main.py",
+      "module": "api.main",
       "cwd": "${workspaceFolder}",
       "env": {
         "PYTHONPATH": "${workspaceFolder}"
@@ -32,6 +32,15 @@
       "request": "launch",
       "url": "http://localhost:3000",
       "webRoot": "${workspaceFolder}/frontend/src"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Full Application",
+      "configurations": [
+        "Debug API",
+        "Debug Frontend"
+      ]
     }
   ]
 }

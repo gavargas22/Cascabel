@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Card, H2, Button, ControlGroup, NumericInput, Switch, FormGroup } from '@blueprintjs/core';
+import { api } from '../services/api';
 
 interface MapviewPanelProps {
   simulationId: string;
@@ -39,12 +40,12 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
   const [carTrails, setCarTrails] = useState<{ [id: string]: [number, number][] }>({});
 
   useEffect(() => {
-    const websocket = new WebSocket(`ws://localhost:8001/ws/${simulationId}`);
-    
+    const websocket = new WebSocket(`${api.WS_BASE_URL}/ws/${simulationId}`);
+
     websocket.onopen = () => {
       console.log('WebSocket connected');
     };
-    
+
     websocket.onmessage = (event) => {
       try {
         const message: SimulationUpdate = JSON.parse(event.data);
@@ -60,11 +61,11 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         console.error('Failed to parse WebSocket message:', error);
       }
     };
-    
+
     websocket.onclose = () => {
       console.log('WebSocket disconnected, attempting to reconnect...');
       setTimeout(() => {
-        const newWs = new WebSocket(`ws://localhost:8001/ws/${simulationId}`);
+        const newWs = new WebSocket(`${api.WS_BASE_URL}/ws/${simulationId}`);
         // Reattach event listeners
         newWs.onopen = websocket.onopen;
         newWs.onmessage = websocket.onmessage;
@@ -73,13 +74,13 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         setWs(newWs);
       }, 1000);
     };
-    
+
     websocket.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
-    
+
     setWs(websocket);
-    
+
     return () => {
       websocket.close();
     };
@@ -91,7 +92,7 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
+
         // Draw border crossing (simplified)
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
@@ -99,19 +100,19 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         ctx.moveTo(50 * zoom, 300 * zoom);
         ctx.lineTo(750 * zoom, 300 * zoom);
         ctx.stroke();
-        
+
         if (simulationData) {
           // Draw cars
           simulationData.cars.forEach(car => {
             const x = (car.position[0] * 10 + 50) * zoom;
             const y = (car.position[1] * 10 + 300) * zoom;
-            ctx.fillStyle = car.status === 'approaching' ? 'blue' : 
-                            car.status === 'queued' ? 'yellow' : 
-                            car.status === 'serving' ? 'orange' : 'green';
+            ctx.fillStyle = car.status === 'approaching' ? 'blue' :
+              car.status === 'queued' ? 'yellow' :
+                car.status === 'serving' ? 'orange' : 'green';
             ctx.beginPath();
             ctx.arc(x, y, 5 * zoom, 0, 2 * Math.PI);
             ctx.fill();
-            
+
             // Trails
             if (showTrails) {
               setCarTrails(prev => {
@@ -132,7 +133,7 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
               });
             }
           });
-          
+
           // Show queue lengths
           if (showQueueLengths) {
             simulationData.queues.forEach((queue, index) => {
@@ -181,7 +182,7 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         const barWidth = canvas.width / 2 - 20;
         const maxHeight = canvas.height - 20;
-        
+
         // Throughput bar
         const throughput = simulationData.queues.reduce((sum, q) => sum + q.throughput, 0);
         const throughputHeight = (throughput / 10) * maxHeight; // Assume max 10
@@ -189,7 +190,7 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         ctx.fillRect(10, canvas.height - throughputHeight - 10, barWidth, throughputHeight);
         ctx.fillStyle = '#000';
         ctx.fillText(`Throughput: ${throughput}`, 10, canvas.height - 5);
-        
+
         // Wait time bar
         const waitTime = simulationData.metrics.average_wait_time;
         const waitHeight = (waitTime / 100) * maxHeight; // Assume max 100

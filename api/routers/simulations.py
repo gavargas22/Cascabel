@@ -530,18 +530,14 @@ async def add_service_station(simulation_id: str, queue_id: int = Query(0)):
         raise HTTPException(status_code=400, detail="Invalid queue ID")
 
     queue = border_crossing.queues[queue_id]
-    
+
     # Create new service node
     node_id = f"q{queue_id}_n{len(queue.service_nodes)}"
     service_rate = 3.0  # Default service rate
     new_node = ServiceNode(node_id, service_rate)
-    
+
     # Add to queue and border crossing
     queue.service_nodes.append(new_node)
     border_crossing.service_nodes.append(new_node)
 
-    return {
-        "station_id": node_id,
-        "queue_id": queue_id,
-        "service_rate": service_rate
-    }
+    return {"station_id": node_id, "queue_id": queue_id, "service_rate": service_rate}
