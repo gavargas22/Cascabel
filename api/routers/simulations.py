@@ -5,7 +5,7 @@ Simulation API Router
 FastAPI router for border crossing simulation endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -17,7 +17,7 @@ from cascabel.models.border_crossing import ServiceNode
 from cascabel.models.simulation import Simulation
 from cascabel.models.models import BorderCrossingConfig, SimulationConfig, PhoneConfig
 from cascabel.simulation.csv_generator import CSVGenerator
-from ..shared import simulations
+from ..shared import simulations, websockets
 
 router = APIRouter()
 
@@ -53,26 +53,94 @@ class TimeSpeedUpdate(BaseModel):
 
 async def run_simulation(simulation_id: str):
     """
-    Run the simulation in the background.
+    Run the simulation in the background with real-time WebSocket updates.
     """
     sim = simulations.get(simulation_id)
     if not sim:
         return
 
+    simulation = sim["simulation"]
     try:
-        simulation = sim["simulation"]
+        print("executing multi-queue border crossing simulation...")
+        simulation.simulation_state["running"] = True
 
-        # Run the simulation (this will block until completion)
-        simulation()
+        while simulation.simulation_state["running"]:
+            dt = simulation.advance_time()
+            simulation.border_crossing.advance_time(dt)
+            if not simulation.should_continue():
+                simulation.simulation_state["running"] = False
+            simulation.record_positions()
+
+            # Send real-time update
+            progress = min(
+                simulation.temporal_state["simulation_time"]
+                / simulation.simulation_state["max_simulation_time"],
+                1.0,
+            )
+            status = {
+                "simulation_id": simulation_id,
+                "status": "running",
+                "progress": progress,
+                "current_time": simulation.temporal_state["simulation_time"],
+                "total_arrivals": simulation.border_crossing.total_arrivals,
+                "total_completions": simulation.border_crossing.total_completions,
+                "message": None,
+            }
+            if simulation_id in websockets:
+                for ws in websockets[simulation_id]:
+                    try:
+                        await ws.send_json(status)
+                    except Exception:
+                        pass
+
+            # Small delay to prevent flooding
+            import asyncio
+
+            await asyncio.sleep(0.1)
+
+        # Collect telemetry data
+        if hasattr(simulation, "telemetry_data"):
+            sim["telemetry_data"] = simulation.telemetry_data
 
         # Update final status
         final_stats = simulation.get_statistics()
         sim["current_time"] = final_stats.simulation_duration
         sim["status"] = "completed"
 
+        final_status = {
+            "simulation_id": simulation_id,
+            "status": "completed",
+            "progress": 1.0,
+            "current_time": final_stats.simulation_duration,
+            "total_arrivals": final_stats.total_arrivals,
+            "total_completions": final_stats.total_completions,
+            "message": "Simulation completed",
+        }
+        if simulation_id in websockets:
+            for ws in websockets[simulation_id]:
+                try:
+                    await ws.send_json(final_status)
+                except Exception:
+                    pass
+
     except Exception as e:
         sim["status"] = "failed"
         sim["error"] = str(e)
+        error_status = {
+            "simulation_id": simulation_id,
+            "status": "failed",
+            "progress": 0.0,
+            "current_time": 0.0,
+            "total_arrivals": 0,
+            "total_completions": 0,
+            "message": str(e),
+        }
+        if simulation_id in websockets:
+            for ws in websockets[simulation_id]:
+                try:
+                    await ws.send_json(error_status)
+                except Exception:
+                    pass
 
 
 @router.post("/simulate", response_model=Dict[str, str])
@@ -98,6 +166,7 @@ async def start_simulation(
             waitline=waitline,
             border_config=request.border_config,
             simulation_config=request.simulation_config,
+            phone_config=request.phone_config,
         )
 
         # Store simulation state
@@ -137,7 +206,6 @@ async def start_grand_simulation(
 
     Returns simulation ID and WebSocket URL for realtime streaming.
     """
-    # Set defaults for grand simulation
     if request.simulation_config is None:
         request.simulation_config = SimulationConfig(
             max_simulation_time=86400.0,  # 24 hours
@@ -163,6 +231,7 @@ async def start_grand_simulation(
             waitline=waitline,
             border_config=request.border_config,
             simulation_config=request.simulation_config,
+            phone_config=request.phone_config,
         )
 
         # Store simulation state
@@ -235,7 +304,47 @@ async def get_simulation_telemetry(simulation_id: str, format: str = "csv"):
     sim = simulations[simulation_id]
 
     if not sim["telemetry_data"]:
-        raise HTTPException(status_code=404, detail="No telemetry data available yet")
+        # For running simulations, collect any available telemetry data
+        if sim["status"] == "running" and "simulation" in sim:
+            simulation = sim["simulation"]
+            if hasattr(simulation, "telemetry_data") and simulation.telemetry_data:
+                sim["telemetry_data"] = simulation.telemetry_data
+
+        # If still no data, return empty CSV with headers
+        if not sim["telemetry_data"]:
+            csv_gen = CSVGenerator()
+            # Return CSV with just headers
+            empty_data = [
+                {
+                    "timestamp": 0.0,
+                    "car_id": 0,
+                    "latitude": 0.0,
+                    "longitude": 0.0,
+                    "altitude": 0.0,
+                    "speed": 0.0,
+                    "heading": 0.0,
+                    "accelerometer_x": 0.0,
+                    "accelerometer_y": 0.0,
+                    "accelerometer_z": 0.0,
+                    "gyroscope_x": 0.0,
+                    "gyroscope_y": 0.0,
+                    "gyroscope_z": 0.0,
+                }
+            ]
+            csv_content = csv_gen.generate_csv(empty_data)
+
+            if format == "json":
+                return {"telemetry": [], "message": "No telemetry data available yet"}
+            else:
+                return StreamingResponse(
+                    iter([csv_content]),
+                    media_type="text/csv",
+                    headers={
+                        "Content-Disposition": (
+                            f"attachment; filename=simulation_{simulation_id}_empty.csv"
+                        )
+                    },
+                )
 
     csv_gen = CSVGenerator()
     csv_content = csv_gen.generate_csv(sim["telemetry_data"])
@@ -541,3 +650,26 @@ async def add_service_station(simulation_id: str, queue_id: int = Query(0)):
     border_crossing.service_nodes.append(new_node)
 
     return {"station_id": node_id, "queue_id": queue_id, "service_rate": service_rate}
+
+
+@router.websocket("/ws/{simulation_id}")
+async def websocket_endpoint(websocket: WebSocket, simulation_id: str):
+    # Allow connections from frontend
+    allowed_origins = ["http://localhost:3000"]
+    origin = websocket.headers.get("origin")
+    if origin not in allowed_origins:
+        await websocket.close(code=1008)  # Policy violation
+        return
+    await websocket.accept()
+    if simulation_id not in websockets:
+        websockets[simulation_id] = []
+    websockets[simulation_id].append(websocket)
+    try:
+        while True:
+            # Keep connection alive, updates sent from run_simulation
+            await websocket.receive_text()
+    except Exception:
+        pass
+    finally:
+        if simulation_id in websockets and websocket in websockets[simulation_id]:
+            websockets[simulation_id].remove(websocket)

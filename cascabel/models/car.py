@@ -5,20 +5,27 @@ from .models import PhoneConfig, CarState
 
 
 class Car:
-    '''
+    """
     Car Model with Physics Simulation
     =================================
 
     Enhanced car model that simulates realistic vehicle physics for queue movement.
     Generates telemetry data matching mobile device sensor formats.
-    '''
-    def __init__(self, car_id, sampling_rate=10, phone_config=None, initial_position=0.0):
+    """
+
+    def __init__(
+        self, car_id, sampling_rate=10, phone_config=None, initial_position=0.0
+    ):
         self.car_id = car_id
         self.sampling_rate = sampling_rate
 
         # Use Pydantic model for phone configuration
         if phone_config:
-            self.phone_config = PhoneConfig(**phone_config)
+            if isinstance(phone_config, dict):
+                self.phone_config = PhoneConfig(**phone_config)
+            else:
+                # Assume it's already a PhoneConfig object
+                self.phone_config = phone_config
         else:
             self.phone_config = PhoneConfig()
 
@@ -55,10 +62,9 @@ class Car:
             waitline: WaitLine object for path geometry
         """
         if self.phone_config:
-            from ..simulation.telemetry.telemetry_generator import (
-                TelemetryGenerator)
-            self.telemetry_gen = TelemetryGenerator(waitline,
-                                                    self.phone_config.dict())
+            from ..simulation.telemetry.telemetry_generator import TelemetryGenerator
+
+            self.telemetry_gen = TelemetryGenerator(waitline, self.phone_config.dict())
 
     def generate_telemetry(self, timestamp):
         """
@@ -93,7 +99,7 @@ class Car:
             queue_id=self.queue_id,
             arrival_time=self.arrival_time,
             service_start_time=self.service_start_time,
-            completion_time=self.completion_time
+            completion_time=self.completion_time,
         )
 
     def update_physics(self, target_velocity, dt):
@@ -109,10 +115,14 @@ class Car:
         required_acceleration = velocity_diff / dt if dt > 0 else 0
 
         # Limit acceleration/deceleration
-        max_accel = (self.max_acceleration if required_acceleration >= 0
-                     else self.max_deceleration)
-        self.acceleration = np.clip(required_acceleration,
-                                    self.max_deceleration, max_accel)
+        max_accel = (
+            self.max_acceleration
+            if required_acceleration >= 0
+            else self.max_deceleration
+        )
+        self.acceleration = np.clip(
+            required_acceleration, self.max_deceleration, max_accel
+        )
 
         # Update velocity
         self.velocity += self.acceleration * dt
@@ -129,18 +139,15 @@ class Car:
 
     def report_gps_position(self, parameter_list):
         """Legacy GPS reporting method"""
-        return (
-            {
-                "latitude": 0.0,
-                "longitude": 0.0
-            }
-        )
+        return {"latitude": 0.0, "longitude": 0.0}
 
     def move(self, velocity, acceleration, time_interval):
         """Legacy move method - updated to use physics"""
         self.update_physics(velocity, time_interval)
-        print(f"Car {self.car_id}: position={self.position:.2f}m, "
-              f"velocity={self.velocity:.2f}m/s")
+        print(
+            f"Car {self.car_id}: position={self.position:.2f}m, "
+            f"velocity={self.velocity:.2f}m/s"
+        )
 
     def set_status(self, status, timestamp=None):
         """Update car status with timestamp"""
@@ -161,10 +168,11 @@ class Car:
     def get_service_time(self):
         """Calculate service time (crossing time)"""
         if self.completion_time and self.service_start_time:
-            return (self.completion_time -
-                    self.service_start_time)
+            return self.completion_time - self.service_start_time
         return 0.0
 
     def __repr__(self):
-        return (f"Car(id={self.car_id}, status={self.status}, "
-                f"pos={self.position:.1f}m, vel={self.velocity:.1f}m/s)")
+        return (
+            f"Car(id={self.car_id}, status={self.status}, "
+            f"pos={self.position:.1f}m, vel={self.velocity:.1f}m/s)"
+        )

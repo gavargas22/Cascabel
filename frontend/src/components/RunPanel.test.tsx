@@ -39,7 +39,7 @@ test('starts simulation on button click', async () => {
   mockApi.startSimulation.mockResolvedValue({
     simulation_id: 'test-id',
     status: 'running',
-    websocket_url: 'ws://localhost:8001/ws/test-id',
+    websocket_url: 'ws://localhost:8000/ws/test-id',
     message: 'Started'
   });
 

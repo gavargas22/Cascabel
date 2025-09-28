@@ -121,3 +121,17 @@ class WaitLine:
         distance_from_start = max(0, min(distance_from_start, self.waitline_length))
         new_position = self.utm_linestring.interpolate(distance_from_start)
         return new_position
+
+    def utm_to_latlon(self, utm_point):
+        """
+        Convert UTM point to latitude/longitude coordinates.
+
+        Args:
+            utm_point: Shapely Point in UTM coordinates
+
+        Returns:
+            tuple: (longitude, latitude)
+        """
+        P = pyproj.Proj(f"EPSG:326{self.utm_zone['utm_zone_number']:02d}")
+        lon, lat = P(utm_point.x, utm_point.y, inverse=True)
+        return [lon, lat]
