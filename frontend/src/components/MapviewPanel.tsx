@@ -38,6 +38,24 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
   const [showTrails, setShowTrails] = useState(false);
   const [showQueueLengths, setShowQueueLengths] = useState(false);
   const [carTrails, setCarTrails] = useState<{ [id: string]: [number, number][] }>({});
+  const [telemetryMode, setTelemetryMode] = useState(false);
+  const [telemetryData, setTelemetryData] = useState<any[]>([]);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
+
+  const loadTelemetryData = async () => {
+    try {
+      const response = await fetch(`/api/simulation/${simulationId}/telemetry`);
+      if (response.ok) {
+        const data = await response.json();
+        setTelemetryData(data.telemetry || []);
+      }
+    } catch (error) {
+      console.error('Failed to load telemetry data:', error);
+    }
+  };
 
   useEffect(() => {
     const websocket = new WebSocket(`${api.WS_BASE_URL}/ws/${simulationId}`);
@@ -101,36 +119,73 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         ctx.lineTo(750 * zoom, 300 * zoom);
         ctx.stroke();
 
-        if (simulationData) {
+        if (telemetryMode && telemetryData.length > 0) {
+          // Telemetry playback mode
+          const currentTime = new Date(telemetryData[0]?.timestamp).getTime() + (playbackTime * 1000);
+
+          // Group telemetry by car
+          const carPaths: { [carId: string]: any[] } = {};
+          telemetryData.forEach((record: any) => {
+            const carId = record.car_id || record.id;
+            if (!carPaths[carId]) carPaths[carId] = [];
+            carPaths[carId].push(record);
+          });
+
+          // Draw car paths and current positions
+          Object.entries(carPaths).forEach(([carId, records]) => {
+            // Draw path
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            records.forEach((record, index) => {
+              const x = ((record.longitude + 106.4850) * 1000 + 400) * zoom;
+              const y = ((31.7619 - record.latitude) * 1000 + 300) * zoom;
+              if (index === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Find current position at playback time
+            const currentRecord = records.find((record, index) => {
+              const recordTime = new Date(record.timestamp).getTime();
+              const nextRecordTime = records[index + 1] ? new Date(records[index + 1].timestamp).getTime() : recordTime;
+              return recordTime <= currentTime && currentTime <= nextRecordTime;
+            });
+
+            if (currentRecord) {
+              const x = ((currentRecord.longitude + 106.4850) * 1000 + 400) * zoom;
+              const y = ((31.7619 - currentRecord.latitude) * 1000 + 300) * zoom;
+              const isSelected = (currentRecord.car_id || currentRecord.id) === selectedCarId;
+              ctx.fillStyle = currentRecord.status === 'arriving' ? 'blue' :
+                currentRecord.status === 'queued' ? 'yellow' :
+                  currentRecord.status === 'serving' ? 'orange' : 'green';
+              ctx.beginPath();
+              ctx.arc(x, y, isSelected ? 8 * zoom : 6 * zoom, 0, 2 * Math.PI);
+              ctx.fill();
+              if (isSelected) {
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+              }
+            }
+          });
+        } else if (simulationData) {
+          // Live simulation mode
           // Draw cars
           simulationData.cars.forEach(car => {
             const x = (car.position[0] * 10 + 50) * zoom;
             const y = (car.position[1] * 10 + 300) * zoom;
+            const isSelected = car.id === selectedCarId;
             ctx.fillStyle = car.status === 'approaching' ? 'blue' :
               car.status === 'queued' ? 'yellow' :
                 car.status === 'serving' ? 'orange' : 'green';
             ctx.beginPath();
-            ctx.arc(x, y, 5 * zoom, 0, 2 * Math.PI);
+            ctx.arc(x, y, isSelected ? 7 * zoom : 5 * zoom, 0, 2 * Math.PI);
             ctx.fill();
-
-            // Trails
-            if (showTrails) {
-              setCarTrails(prev => {
-                const trail = prev[car.id] || [];
-                trail.push([x, y]);
-                if (trail.length > 10) trail.shift(); // Keep last 10
-                const newTrails = { ...prev, [car.id]: trail };
-                // Draw trail
-                ctx.strokeStyle = ctx.fillStyle;
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                trail.forEach((pos, i) => {
-                  if (i === 0) ctx.moveTo(pos[0], pos[1]);
-                  else ctx.lineTo(pos[0], pos[1]);
-                });
-                ctx.stroke();
-                return newTrails;
-              });
+            if (isSelected) {
+              ctx.strokeStyle = '#ff0000';
+              ctx.lineWidth = 2;
+              ctx.stroke();
             }
           });
 
@@ -151,7 +206,7 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         }
       }
     }
-  }, [simulationData, zoom, showTrails, showQueueLengths]);
+  }, [simulationData, zoom, showTrails, showQueueLengths, telemetryMode, telemetryData, playbackTime]);
 
   useEffect(() => {
     const canvas = chartCanvasRef.current;
@@ -206,6 +261,30 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
     // Implement any settings application logic here
     console.log('Settings applied:', { zoom, refreshRate, showTrails, showQueueLengths });
   };
+
+  useEffect(() => {
+    if (telemetryMode) {
+      loadTelemetryData();
+    }
+  }, [telemetryMode, simulationId]);
+
+  // Playback animation
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (telemetryMode && isPlaying && telemetryData.length > 0) {
+      interval = setInterval(() => {
+        setPlaybackTime(prev => {
+          const maxTime = (new Date(telemetryData[telemetryData.length - 1]?.timestamp).getTime() -
+            new Date(telemetryData[0]?.timestamp).getTime()) / 1000;
+          const nextTime = prev + (1 / 30) * playbackSpeed; // 30 FPS
+          return nextTime >= maxTime ? 0 : nextTime; // Loop back to start
+        });
+      }, 1000 / 30); // 30 FPS
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [telemetryMode, isPlaying, telemetryData, playbackSpeed]);
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
@@ -279,6 +358,44 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
               checked={showQueueLengths}
               onChange={(e) => setShowQueueLengths((e.target as HTMLInputElement).checked)}
             />
+            <Switch
+              label="Telemetry Mode"
+              checked={telemetryMode}
+              onChange={(e) => setTelemetryMode((e.target as HTMLInputElement).checked)}
+            />
+            {telemetryMode && (
+              <>
+                <FormGroup label="Playback Speed">
+                  <NumericInput
+                    value={playbackSpeed}
+                    onValueChange={setPlaybackSpeed}
+                    min={0.1}
+                    max={4}
+                    stepSize={0.1}
+                    fill
+                  />
+                </FormGroup>
+                <Button
+                  intent={isPlaying ? "danger" : "success"}
+                  fill
+                  onClick={() => setIsPlaying(!isPlaying)}
+                >
+                  {isPlaying ? "Pause" : "Play"}
+                </Button>
+                <FormGroup label="Playback Time">
+                  <NumericInput
+                    value={playbackTime}
+                    onValueChange={setPlaybackTime}
+                    min={0}
+                    max={telemetryData.length > 0 ?
+                      (new Date(telemetryData[telemetryData.length - 1]?.timestamp).getTime() -
+                        new Date(telemetryData[0]?.timestamp).getTime()) / 1000 : 0}
+                    stepSize={1}
+                    fill
+                  />
+                </FormGroup>
+              </>
+            )}
             <Button intent="primary" fill onClick={handleApplySettings}>
               Apply Settings
             </Button>
@@ -290,6 +407,71 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
           <p>Throughput: {simulationData?.queues.reduce((sum, q) => sum + q.throughput, 0) || '--'} cars/min</p>
           <p>Avg Wait Time: {simulationData?.metrics.average_wait_time?.toFixed(1) || '--'} sec</p>
         </Card>
+        <Card style={{ marginTop: '10px' }}>
+          <H2>Car List</H2>
+          <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+            {(telemetryMode ? telemetryData : simulationData?.cars || []).map((car: any) => {
+              const carId = telemetryMode ? car.car_id || car.id : car.id;
+              const isSelected = selectedCarId === carId;
+              return (
+                <div
+                  key={carId}
+                  style={{
+                    padding: '8px',
+                    margin: '4px 0',
+                    backgroundColor: isSelected ? '#e1f5fe' : '#f5f5f5',
+                    border: isSelected ? '2px solid #2196f3' : '1px solid #ddd',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => setSelectedCarId(carId)}
+                >
+                  <div style={{ fontWeight: 'bold' }}>Car {carId}</div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>
+                    Status: {car.status}
+                  </div>
+                  {telemetryMode && (
+                    <div style={{ fontSize: '12px', color: '#666' }}>
+                      Speed: {car.velocity?.toFixed(1)} m/s
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+        {selectedCarId && (
+          <Card style={{ marginTop: '10px' }}>
+            <H2>Car Dashboard - {selectedCarId}</H2>
+            {(() => {
+              const car = (telemetryMode ? telemetryData : simulationData?.cars || [])
+                .find((c: any) => (telemetryMode ? c.car_id || c.id : c.id) === selectedCarId);
+              if (!car) return <div>No data available</div>;
+
+              return (
+                <div>
+                  <p><strong>Status:</strong> {car.status}</p>
+                  {telemetryMode ? (
+                    <>
+                      <p><strong>Position:</strong> {car.latitude?.toFixed(6)}, {car.longitude?.toFixed(6)}</p>
+                      <p><strong>Velocity:</strong> {car.velocity?.toFixed(2)} m/s</p>
+                      <p><strong>Acceleration:</strong> {car.acceleration?.toFixed(2)} m/s²</p>
+                      <p><strong>Queue ID:</strong> {car.queue_id || 'None'}</p>
+                      <p><strong>Distance Traveled:</strong> {car.distance_traveled?.toFixed(2)} m</p>
+                    </>
+                  ) : (
+                    <>
+                      <p><strong>Position:</strong> {car.position?.join(', ')}</p>
+                      <p><strong>Velocity:</strong> {car.velocity?.toFixed(2)} m/s</p>
+                      <p><strong>Acceleration:</strong> {car.acceleration?.toFixed(2)} m/s²</p>
+                      <p><strong>Queue ID:</strong> {car.queue_id}</p>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+          </Card>
+        )}
       </div>
     </div>
   );
