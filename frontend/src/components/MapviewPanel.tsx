@@ -1,6 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Card, H2, Button, ControlGroup, NumericInput, Switch, FormGroup } from '@blueprintjs/core';
+import Map, { Marker, Source, Layer, NavigationControl } from 'react-map-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import { api } from '../services/api';
+
+// Import API_BASE_URL for GeoJSON endpoint
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 interface MapviewPanelProps {
   simulationId: string;
@@ -27,13 +32,12 @@ interface SimulationUpdate {
 }
 
 const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mapRef = useRef<any>(null);
   const chartCanvasRef = useRef<HTMLCanvasElement>(null);
   const barChartCanvasRef = useRef<HTMLCanvasElement>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [simulationData, setSimulationData] = useState<SimulationUpdate['data'] | null>(null);
   const [chartData, setChartData] = useState<{ time: number; queueLength: number }[]>([]);
-  const [zoom, setZoom] = useState(1);
   const [refreshRate, setRefreshRate] = useState(1000);
   const [showTrails, setShowTrails] = useState(false);
   const [showQueueLengths, setShowQueueLengths] = useState(false);
@@ -105,108 +109,101 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
   }, [simulationId]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Draw border crossing (simplified)
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(50 * zoom, 300 * zoom);
-        ctx.lineTo(750 * zoom, 300 * zoom);
-        ctx.stroke();
-
-        if (telemetryMode && telemetryData.length > 0) {
-          // Telemetry playback mode
-          const currentTime = new Date(telemetryData[0]?.timestamp).getTime() + (playbackTime * 1000);
-
-          // Group telemetry by car
-          const carPaths: { [carId: string]: any[] } = {};
-          telemetryData.forEach((record: any) => {
-            const carId = record.car_id || record.id;
-            if (!carPaths[carId]) carPaths[carId] = [];
-            carPaths[carId].push(record);
-          });
-
-          // Draw car paths and current positions
-          Object.entries(carPaths).forEach(([carId, records]) => {
-            // Draw path
-            ctx.strokeStyle = '#666';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            records.forEach((record, index) => {
-              const x = ((record.longitude + 106.4850) * 1000 + 400) * zoom;
-              const y = ((31.7619 - record.latitude) * 1000 + 300) * zoom;
-              if (index === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
-            });
-            ctx.stroke();
-
-            // Find current position at playback time
-            const currentRecord = records.find((record, index) => {
-              const recordTime = new Date(record.timestamp).getTime();
-              const nextRecordTime = records[index + 1] ? new Date(records[index + 1].timestamp).getTime() : recordTime;
-              return recordTime <= currentTime && currentTime <= nextRecordTime;
-            });
-
-            if (currentRecord) {
-              const x = ((currentRecord.longitude + 106.4850) * 1000 + 400) * zoom;
-              const y = ((31.7619 - currentRecord.latitude) * 1000 + 300) * zoom;
-              const isSelected = (currentRecord.car_id || currentRecord.id) === selectedCarId;
-              ctx.fillStyle = currentRecord.status === 'arriving' ? 'blue' :
-                currentRecord.status === 'queued' ? 'yellow' :
-                  currentRecord.status === 'serving' ? 'orange' : 'green';
-              ctx.beginPath();
-              ctx.arc(x, y, isSelected ? 8 * zoom : 6 * zoom, 0, 2 * Math.PI);
-              ctx.fill();
-              if (isSelected) {
-                ctx.strokeStyle = '#ff0000';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-              }
-            }
-          });
-        } else if (simulationData) {
-          // Live simulation mode
-          // Draw cars
-          simulationData.cars.forEach(car => {
-            const x = (car.position[0] * 10 + 50) * zoom;
-            const y = (car.position[1] * 10 + 300) * zoom;
-            const isSelected = car.id === selectedCarId;
-            ctx.fillStyle = car.status === 'approaching' ? 'blue' :
-              car.status === 'queued' ? 'yellow' :
-                car.status === 'serving' ? 'orange' : 'green';
-            ctx.beginPath();
-            ctx.arc(x, y, isSelected ? 7 * zoom : 5 * zoom, 0, 2 * Math.PI);
-            ctx.fill();
-            if (isSelected) {
-              ctx.strokeStyle = '#ff0000';
-              ctx.lineWidth = 2;
-              ctx.stroke();
-            }
-          });
-
-          // Show queue lengths
-          if (showQueueLengths) {
-            simulationData.queues.forEach((queue, index) => {
-              ctx.fillStyle = '#000';
-              ctx.fillText(`Q${index}: ${queue.length}`, 50 + index * 100, 50);
-            });
-          }
-        } else {
-          // Placeholder
-          ctx.fillStyle = '#f0f0f0';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = '#000';
-          ctx.font = '20px Arial';
-          ctx.fillText('Map Canvas Placeholder', 50, 50);
+    const map = mapRef.current?.getMap();
+    if (map && telemetryData.length > 0) {
+      // Calculate bounds from telemetry data
+      const bounds = telemetryData.reduce(
+        (acc: any, point: any) => ({
+          minLng: Math.min(acc.minLng, point.longitude),
+          maxLng: Math.max(acc.maxLng, point.longitude),
+          minLat: Math.min(acc.minLat, point.latitude),
+          maxLat: Math.max(acc.maxLat, point.latitude),
+        }),
+        {
+          minLng: Infinity,
+          maxLng: -Infinity,
+          minLat: Infinity,
+          maxLat: -Infinity,
         }
-      }
+      );
+
+      // Fit map to bounds with padding
+      map.fitBounds(
+        [[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]],
+        { padding: 50, duration: 1000 }
+      );
     }
-  }, [simulationData, zoom, showTrails, showQueueLengths, telemetryMode, telemetryData, playbackTime]);
+  }, [telemetryData]);
+
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (map && simulationData) {
+      // Update car markers
+      const carFeatures = simulationData.cars.map(car => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [car.position[0], car.position[1]],
+        },
+        properties: {
+          id: car.id,
+          status: car.status,
+        },
+      }));
+
+      // Update queue markers
+      const queueFeatures = simulationData.queues.map((queue, index) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [index * 0.01, 0], // Dummy coordinates
+        },
+        properties: {
+          length: queue.length,
+          throughput: queue.throughput,
+        },
+      }));
+
+      // Add sources and layers for cars and queues
+      mapRef.current.setProps({
+        children: (
+          <>
+            <Source id="cars" type="geojson" data={{ type: 'FeatureCollection', features: carFeatures }} />
+            <Layer
+              id="car-points"
+              type="circle"
+              source="cars"
+              paint={{
+                'circle-radius': 6,
+                'circle-color': [
+                  'match',
+                  ['get', 'status'],
+                  'approaching', '#007bff',
+                  'queued', '#ffc107',
+                  'serving', '#28a745',
+                  'completed', '#dc3545',
+                  '#ccc'
+                ],
+                'circle-stroke-color': '#fff',
+                'circle-stroke-width': 2,
+              }}
+            />
+            <Source id="queues" type="geojson" data={{ type: 'FeatureCollection', features: queueFeatures }} />
+            <Layer
+              id="queue-points"
+              type="circle"
+              source="queues"
+              paint={{
+                'circle-radius': 4,
+                'circle-color': '#007bff',
+                'circle-opacity': 0.6,
+              }}
+            />
+          </>
+        ),
+      });
+    }
+  }, [simulationData]);
 
   useEffect(() => {
     const canvas = chartCanvasRef.current;
@@ -259,7 +256,7 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
 
   const handleApplySettings = () => {
     // Implement any settings application logic here
-    console.log('Settings applied:', { zoom, refreshRate, showTrails, showQueueLengths });
+    console.log('Settings applied:', { refreshRate, showTrails, showQueueLengths });
   };
 
   useEffect(() => {
@@ -289,15 +286,156 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <div style={{ flex: 1, padding: '10px' }}>
-        <Card>
+        <Card style={{ height: '600px', overflow: 'hidden' }}>
           <H2>Simulation Mapview - ID: {simulationId}</H2>
-          <canvas
-            ref={canvasRef}
-            width={800}
-            height={600}
-            style={{ border: '1px solid #ccc', backgroundColor: '#fff' }}
-            aria-label="Map canvas"
-          />
+          <Map
+            ref={mapRef}
+            initialViewState={{
+              longitude: -106.4528, // Tijuana/San Diego border crossing
+              latitude: 31.7479,
+              zoom: 10,
+              pitch: 0,
+              bearing: 0,
+            }}
+            style={{ width: '100%', height: '100%' }}
+            mapStyle="mapbox://styles/gavargas/ck1yptdx72uqd1cn0x144h6sx"
+            mapboxAccessToken={process.env.REACT_APP_MAPBOX_TOKEN}
+          >
+            {/* Car markers - limit rendering for performance */}
+            {simulationData?.cars.slice(0, 100).map(car => (
+              <Marker
+                key={car.id}
+                longitude={car.position[0]}
+                latitude={car.position[1]}
+                anchor="center"
+                onClick={() => setSelectedCarId(car.id)}
+              >
+                <div
+                  style={{
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    backgroundColor:
+                      car.status === 'approaching' ? '#007bff' :
+                        car.status === 'queued' ? '#ffc107' :
+                          car.status === 'serving' ? '#28a745' :
+                            car.status === 'completed' ? '#dc3545' : '#ccc',
+                    border: selectedCarId === car.id ? '3px solid #ff0000' : '2px solid #fff',
+                    boxShadow: '0 0 4px rgba(0,0,0,0.3)',
+                    cursor: 'pointer',
+                  }}
+                  title={`Car ${car.id} - ${car.status}`}
+                />
+              </Marker>
+            ))}
+
+            {/* Border geometry overlay */}
+            <Source
+              id="border-path"
+              type="geojson"
+              data={`${API_BASE_URL}/geojson/usa2mx/bota`}
+            />
+            <Layer
+              id="border-path-line"
+              type="line"
+              source="border-path"
+              paint={{
+                'line-color': '#ff0000',
+                'line-width': 3,
+                'line-opacity': 0.8,
+              }}
+            />
+
+            {/* Animated telemetry markers */}
+            {telemetryMode && isPlaying && telemetryData.length > 0 && (
+              <>
+                {(Object.entries(
+                  telemetryData.reduce((acc: any, point: any) => {
+                    if (!acc[point.car_id]) acc[point.car_id] = [];
+                    acc[point.car_id].push(point);
+                    return acc;
+                  }, {} as Record<string, any[]>)
+                ) as [string, any][]).map(([carId, points]) => {
+                  // Find the current position based on playback time
+                  const currentPoint = points.find((point: any, index: number) => {
+                    const nextPoint = points[index + 1];
+                    if (!nextPoint) return true;
+                    return point.timestamp <= playbackTime && nextPoint.timestamp > playbackTime;
+                  }) || points[points.length - 1];
+
+                  return (
+                    <Marker
+                      key={`animated-${carId}`}
+                      longitude={currentPoint.longitude}
+                      latitude={currentPoint.latitude}
+                      anchor="center"
+                    >
+                      <div
+                        style={{
+                          width: '16px',
+                          height: '16px',
+                          borderRadius: '50%',
+                          backgroundColor: selectedCarId === carId ? '#ff0000' : '#007bff',
+                          border: '3px solid #fff',
+                          boxShadow: '0 0 8px rgba(0,0,0,0.5)',
+                          animation: 'pulse 1s infinite',
+                        }}
+                        title={`Car ${carId} - ${currentPoint.status}`}
+                      />
+                    </Marker>
+                  );
+                })}
+              </>
+            )}
+
+            {/* Telemetry paths */}
+            {telemetryMode && telemetryData.length > 0 && (
+              <>
+                <Source
+                  id="telemetry-paths"
+                  type="geojson"
+                  data={{
+                    type: 'FeatureCollection',
+                    features: Object.entries(
+                      telemetryData.reduce((acc: any, point: any) => {
+                        if (!acc[point.car_id]) acc[point.car_id] = [];
+                        acc[point.car_id].push([point.longitude, point.latitude]);
+                        return acc;
+                      }, {})
+                    ).map(([carId, coordinates]: [string, any]) => ({
+                      type: 'Feature',
+                      geometry: {
+                        type: 'LineString',
+                        coordinates: coordinates,
+                      },
+                      properties: {
+                        carId: carId,
+                        selected: selectedCarId === carId,
+                      },
+                    })),
+                  }}
+                />
+                <Layer
+                  id="telemetry-paths-line"
+                  type="line"
+                  source="telemetry-paths"
+                  paint={{
+                    'line-color': ['case',
+                      ['==', ['get', 'selected'], true], '#ff0000',
+                      '#007bff'
+                    ],
+                    'line-width': ['case',
+                      ['==', ['get', 'selected'], true], 4,
+                      2
+                    ],
+                    'line-opacity': 0.7,
+                  }}
+                />
+              </>
+            )}
+
+            <NavigationControl position="top-right" />
+          </Map>
         </Card>
         <Card style={{ marginTop: '10px' }}>
           <H2>Queue Length Over Time</H2>
@@ -324,18 +462,6 @@ const MapviewPanel: React.FC<MapviewPanelProps> = ({ simulationId }) => {
         <Card>
           <H2>Visualization Controls</H2>
           <ControlGroup vertical>
-            <FormGroup label="Zoom Level">
-              <NumericInput
-                value={zoom}
-                onValueChange={setZoom}
-                min={0.5}
-                max={5}
-                stepSize={0.1}
-                minorStepSize={0.1}
-                majorStepSize={1}
-                fill
-              />
-            </FormGroup>
             <FormGroup label="Refresh Rate (ms)">
               <NumericInput
                 value={refreshRate}
