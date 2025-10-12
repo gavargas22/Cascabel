@@ -19,6 +19,7 @@ dependencies = [
     "utm>=0.8.1",
     "uvicorn>=0.36.0",
     "websockets>=15.0.1",
+    "feedparser>=6.0.12",
 ]
 
 [dependency-groups]

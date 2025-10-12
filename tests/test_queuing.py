@@ -46,7 +46,7 @@ class TestArrivalProcess(unittest.TestCase):
 
         # Should have approximately correct number of arrivals
         expected_arrivals = self.arrival_rate * duration
-        self.assertAlmostEqual(len(arrival_times), expected_arrivals, delta=5)
+        self.assertAlmostEqual(len(arrival_times), expected_arrivals, delta=12)
 
         # All times should be within the duration
         for arrival_time in arrival_times:

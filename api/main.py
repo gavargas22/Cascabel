@@ -10,31 +10,42 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
+
 from .routers import simulations
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-app = FastAPI(
-    title="Cascabel Border Crossing Simulation API",
-    description="API for simulating car queues at border crossings "
-    "with realistic telemetry generation",
-    version="1.0.0",
-)
+try:
+    app = FastAPI(
+        title="Cascabel Border Crossing Simulation API",
+        description="API for simulating car queues at border crossings "
+        "with realistic telemetry generation",
+        version="1.0.0",
+    )
 
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[frontend_url],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[frontend_url],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# Include routers
-app.include_router(simulations.router)
+    # Include routers
+    app.include_router(simulations.router)
+
+    print("App created successfully")
+
+except Exception as e:
+    print(f"Error creating app: {e}")
+    import traceback
+
+    traceback.print_exc()
+    exit(1)
 
 
 @app.get("/")
@@ -50,5 +61,12 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("API_PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    try:
+        port = int(os.getenv("API_PORT", "8000"))
+        print(f"Starting server on port {port}")
+        uvicorn.run(app, host="0.0.0.0", port=port)
+    except Exception as e:
+        print(f"Error starting server: {e}")
+        import traceback
+
+        traceback.print_exc()

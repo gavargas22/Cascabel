@@ -86,7 +86,7 @@ class TestAPI(unittest.TestCase):
         self.assertIn(response.status_code, [200, 404])
 
         if response.status_code == 200:
-            self.assertEqual(response.headers["content-type"], "text/csv")
+            self.assertIn("text/csv", response.headers["content-type"])
 
     def test_get_simulation_telemetry_json(self):
         """Test getting telemetry as JSON"""

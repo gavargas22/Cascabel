@@ -49,6 +49,8 @@
     ]
   },
   "devDependencies": {
-    "canvas": "^3.2.0"
+    "@types/text-encoding": "^0.0.40",
+    "canvas": "^3.2.0",
+    "text-encoding": "^0.7.0"
   }
 }
