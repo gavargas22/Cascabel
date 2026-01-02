@@ -6,12 +6,29 @@ Simulates traffic on the border bridges with realistic car queue modeling and te
 
 ## Features
 
+### Core Simulation
 - **M/M/1 Queue Simulation**: Implements queuing theory for realistic car arrival and service patterns
 - **Physics-Based Car Movement**: Enhanced car models with acceleration, velocity limits, and realistic physics
+- **Multi-Queue System**: Support for multiple parallel queues with configurable service nodes
 - **Realistic Telemetry Generation**: Generates GPS, accelerometer, and motion data matching real mobile device sensors
-- **REST API**: FastAPI-based server for simulation management
-- **Realtime Streaming**: WebSocket support for live telemetry data feed
+- **GeoJSON Boundary Support**: Define border crossing geometries with polygon constraints
+
+### API & Real-time
+- **REST API**: FastAPI-based server with 15+ endpoints for simulation management
+- **WebSocket Streaming**: Live simulation state updates with car positions and queue metrics
+- **Dynamic Control**: Adjust service rates, add stations, and modify simulation speed in real-time
+
+### Visualization
+- **Interactive Map View**: Real-time car tracking on Mapbox GL with service station visualization
+- **Historical Playback**: Load and animate completed simulations from telemetry CSV files
+- **Playback Controls**: Play/pause, seek, and adjustable speed for reviewing simulation history
+- **Car Monitoring Dashboard**: Detailed metrics for individual vehicles with selection highlighting
+- **Queue Visualization**: Live queue state display with length and throughput metrics
+
+### Configuration
 - **Phone Parameters**: Configurable sampling rates, sensor noise, and device orientations
+- **Service Node Management**: Independent service rates per node with dynamic adjustment
+- **Queue Assignment Strategies**: Shortest, round-robin, or random queue selection
 
 ## Future Enhancements
 
@@ -84,30 +101,74 @@ curl -X POST "http://localhost:8000/simulate" \
 
 ## API Endpoints
 
+### Simulation Control
 - `POST /simulate` - Start a new simulation
+- `POST /grand-simulate` - Start simulation with grand configuration
+- `GET /simulations` - List all active simulations
 - `GET /simulation/{id}/status` - Get simulation status
-- `GET /simulation/{id}/telemetry` - Download telemetry CSV
-- `WebSocket /ws/{id}` - Realtime telemetry streaming
+- `GET /simulation/{id}/state` - Get detailed simulation state
+- `DELETE /simulation/{id}` - Stop and remove simulation
+
+### Real-time Updates
+- `WebSocket /ws/{id}` - Real-time simulation state streaming
+- `GET /simulation/{id}/telemetry` - Download telemetry data (CSV/JSON)
+
+### Dynamic Control
+- `PUT /simulation/{id}/time_speed` - Adjust simulation speed (time factor)
+- `PUT /simulation/{id}/service_node/{node_id}` - Update service node rate
+- `POST /simulation/{id}/add_car` - Add cars to running simulation
+- `POST /simulation/{id}/add_station` - Add service stations dynamically
+
+### GeoJSON Management
+- `GET /geojson/{path_name}` - Load GeoJSON boundary files
+- `GET /border-crossings` - List available border crossings
+- `POST /border-crossings/{id}/load` - Load specific border crossing configuration
 
 ## Project Structure
 
 ```
 cascabel/
-├── models/                 # Core simulation models
-│   ├── car.py             # Enhanced car with physics
-│   ├── waitline.py        # Geographic path model
-│   ├── queuing/           # Queue theory implementations
-│   └── simulation.py      # Main simulation orchestrator
-├── simulation/
-│   ├── telemetry/         # Sensor data generators
-│   └── csv_generator.py   # CSV output formatting
-├── utils/
-│   └── io/                # GeoJSON file handling
-└── tests/                 # Unit tests
-
-api/                       # FastAPI server
-scripts/                   # Utility scripts
-raw_data/                  # Real telemetry samples
+├── api/                    # FastAPI backend server
+│   ├── main.py            # Application entry point
+│   └── routers/           # API route handlers
+│       └── simulations.py # Simulation endpoints
+├── cascabel/              # Core simulation engine
+│   ├── models/            # Domain models
+│   │   ├── car.py         # Physics-based car model
+│   │   ├── waitline.py    # GeoJSON path representation
+│   │   ├── queue.py       # Queue management
+│   │   ├── border_crossing.py  # Multi-queue coordinator
+│   │   ├── simulation.py  # Main orchestrator
+│   │   └── queuing/       # M/M/1 implementation
+│   ├── simulation/
+│   │   └── telemetry/     # Sensor data generators
+│   ├── utils/             # Utilities
+│   │   ├── geojson_loader.py      # GeoJSON parsing
+│   │   └── bounding_validator.py # Boundary constraints
+│   └── tests/             # Backend unit tests
+├── frontend/              # React TypeScript application
+│   └── src/
+│       ├── components/    # UI components
+│       │   ├── RealtimeMapView.tsx      # Live map visualization
+│       │   ├── MapviewPanel.tsx         # Interactive map panel
+│       │   ├── CarTelemetryDashboard.tsx # Individual car metrics
+│       │   ├── ConfigurePanel.tsx       # Simulation setup
+│       │   ├── RunPanel.tsx             # Control panel
+│       │   ├── QueueVisualization.tsx   # Queue display
+│       │   └── ResultsPanel.tsx         # Results download
+│       └── services/
+│           └── api.ts     # Type-safe API client
+├── .claude/               # Claude Code agent configurations
+│   ├── agents/            # Custom AI agents
+│   ├── skills/            # Reusable AI skills
+│   ├── CLAUDE.md          # Project context
+│   └── settings.json      # Agent configuration
+├── .agentic-docs/         # Agent OS documentation
+│   ├── product/           # Product mission & roadmap
+│   ├── specs/             # Feature specifications
+│   └── recaps/            # Implementation summaries
+├── raw_data/              # Real telemetry samples
+└── tests/                 # Backend unit tests
 ```
 
 ## Docker Setup
@@ -200,8 +261,34 @@ python -m unittest
 
 ## Development
 
-The project includes comprehensive documentation in `.agentic-docs/` including:
-- Project analysis and MVP requirements
-- API specification
-- Queuing theory implementation details
-- Telemetry generation methodology
+### Agent OS Integration
+
+This project uses [Agent OS](https://github.com/buildermethods/agent-os) for AI-assisted development with Claude Code. The `.claude/` directory contains:
+
+- **Agents**: Specialized AI assistants for planning, spec creation, and task execution
+- **Skills**: Reusable workflows for common development tasks
+- **CLAUDE.md**: Project context and development guidelines
+- **settings.json**: Agent configuration and tool permissions
+
+To use the agents:
+```bash
+# Create a new feature spec
+Use the create-spec agent to plan my next feature
+
+# Execute tasks from a spec
+Use the execute-tasks agent to implement the current spec
+```
+
+### Documentation
+
+Comprehensive documentation in `.agentic-docs/` includes:
+- **Product**: Mission statement, tech stack, and roadmap
+- **Specs**: Detailed feature specifications with technical details
+- **Recaps**: Post-implementation summaries of completed features
+
+### Recent Additions
+
+- **Mapview Realtime Visualization** (2025-09-28): Live car tracking, historical playback, and individual car dashboards
+- **Near-Realtime Queue Visualization** (2025-09-28): Mapbox integration, WebSocket streaming, and dynamic station management
+- **GeoJSON Boundaries**: Support for multiple border crossings with polygon constraints
+- **Claude Code Migration**: Modernized agent structure following latest standards
