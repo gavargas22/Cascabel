@@ -159,6 +159,9 @@ class BorderCrossing:
         self.total_completions = 0
         self.current_time = 0.0
 
+        # Completed cars history for metrics
+        self.completed_cars = []  # Store completed cars for statistics
+
     def _initialize_queues_and_nodes(self):
         """Initialize queues and service nodes."""
         node_index = 0
@@ -212,6 +215,8 @@ class BorderCrossing:
         if car:
             self.total_arrivals += 1
             car.queue_id = queue_index
+            # Set arrival time when car is added to queue
+            car.set_status("queued", self.current_time)
 
         return car, queue_index
 
@@ -291,6 +296,18 @@ class BorderCrossing:
                 if completed_car:
                     completed_cars.append(completed_car)
                     self.total_completions += 1
+                    # Store in history for metrics calculation
+                    self.completed_cars.append(completed_car)
+
+                    # Remove the completed car from its queue
+                    for queue in self.queues:
+                        if completed_car.car_id in queue.cars:
+                            # Remove from cars dict
+                            del queue.cars[completed_car.car_id]
+                            # Remove from position tracking
+                            if completed_car.car_id in queue.car_positions:
+                                queue.car_positions.remove(completed_car.car_id)
+                            break
 
         return completed_cars
 
@@ -317,8 +334,8 @@ class BorderCrossing:
         # Try to assign to an available node
         for node in available_nodes:
             if node.start_service(first_car, self.current_time):
-                # Remove car from queue
-                queue.car_positions.remove(first_car_id)
+                # Don't remove from car_positions yet - keep visible until completion
+                # The car will be removed when service completes
                 break
 
     def get_statistics(self):
@@ -376,6 +393,19 @@ class BorderCrossing:
         """Calculate overall system utilization."""
         total_busy_nodes = sum(1 for node in self.service_nodes if node.is_busy)
         return total_busy_nodes / len(self.service_nodes) if self.service_nodes else 0.0
+
+    def get_average_wait_time(self):
+        """Calculate average wait time from completed cars."""
+        if not self.completed_cars:
+            return 0.0
+
+        wait_times = [
+            car.service_start_time - car.arrival_time
+            for car in self.completed_cars
+            if car.service_start_time and car.arrival_time
+        ]
+
+        return sum(wait_times) / len(wait_times) if wait_times else 0.0
 
     def __repr__(self):
         return (

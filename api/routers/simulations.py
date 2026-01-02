@@ -120,23 +120,18 @@ async def run_simulation(simulation_id: str):
                     {"length": len(queue.car_positions), "throughput": throughput}
                 )
 
-            # Calculate average wait time
-            completed_cars = [
-                car
-                for queue in simulation.border_crossing.queues
-                for car in queue.cars.values()
-                if (
-                    car.status == "completed"
-                    and car.service_start_time
-                    and car.arrival_time
-                )
-            ]
+            # Calculate average wait time from completed cars history
+            completed_cars = simulation.border_crossing.completed_cars
             avg_wait_time = None
             if completed_cars:
-                total_wait = sum(
-                    car.service_start_time - car.arrival_time for car in completed_cars
-                )
-                avg_wait_time = total_wait / len(completed_cars)
+                # Calculate from cars that have both arrival and service start times
+                wait_times = [
+                    car.service_start_time - car.arrival_time
+                    for car in completed_cars
+                    if car.service_start_time and car.arrival_time
+                ]
+                if wait_times:
+                    avg_wait_time = sum(wait_times) / len(wait_times)
 
             message = {
                 "type": "simulation_update",
@@ -177,8 +172,8 @@ async def run_simulation(simulation_id: str):
             "status": "completed",
             "progress": 1.0,
             "current_time": final_stats.simulation_duration,
-            "total_arrivals": final_stats.total_arrivals,
-            "total_completions": final_stats.total_completions,
+            "total_arrivals": final_stats.execution_stats.total_arrivals,
+            "total_completions": final_stats.execution_stats.total_completions,
             "message": "Simulation completed",
         }
         if simulation_id in websockets:
@@ -855,7 +850,7 @@ async def get_simulation_config():
     return config
 
 
-@router.get("/geojson/{path_name}")
+@router.get("/geojson/{path_name:path}")
 async def get_geojson(path_name: str):
     """
     Get GeoJSON data for border crossing paths.

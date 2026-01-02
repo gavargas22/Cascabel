@@ -1,0 +1,99 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.18.4"
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "4ff4a92fce14442d98b5fd36a5cf0cb8",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "OvTt",
+      "code_hash": "1d8e266d1a0885d2ff6791a75c177942",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "KbXU",
+      "code_hash": "1270884a83492260f69edf04b043d6e3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "enJX",
+      "code_hash": "59b4228f845975725d54e39634d27a11",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "NGcz",
+      "code_hash": "0be692cc25b1fa9a81e00e8fafab9312",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "executing multi-queue border crossing simulation...\nSimulation completed. Final statistics: simulation_config=SimulationConfig(max_simulation_time=3600.0, time_factor=1.0, enable_telemetry=True, enable_position_tracking=True) border_config=BorderCrossingConfig(num_queues=3, nodes_per_queue=[2, 2, 2], arrival_rate=2.0, service_rates=[0.8, 0.9, 0.7, 0.85, 0.75, 0.9], queue_assignment='shortest', safe_distance=8.0, max_queue_length=50) execution_stats=BorderCrossingStats(total_arrivals=12, total_completions=12, current_time=3600.0, num_queues=3, total_service_nodes=6, queue_assignment_strategy='shortest', overall_utilization=0.0, average_waiting_time=None, average_service_time=None, throughput=0.2) queue_stats=[QueueStats(queue_id=0, total_cars=4, queue_length=0, busy_nodes=0, num_service_nodes=2, utilization=0.0, average_wait_time=0.0, total_arrivals=4, total_completions=0), QueueStats(queue_id=1, total_cars=4, queue_length=0, busy_nodes=0, num_service_nodes=2, utilization=0.0, average_wait_time=0.0, total_arrivals=4, total_completions=0), QueueStats(queue_id=2, total_cars=4, queue_length=0, busy_nodes=0, num_service_nodes=2, utilization=0.0, average_wait_time=0.0, total_arrivals=4, total_completions=0)] node_stats=[ServiceNodeStats(node_id='q0_n0', queue_id=0, service_rate=0.8, total_served=4, total_service_time=225.0, utilization=0.75, average_service_time=56.25), ServiceNodeStats(node_id='q0_n1', queue_id=0, service_rate=0.9, total_served=0, total_service_time=0.0, utilization=0.0, average_service_time=0.0), ServiceNodeStats(node_id='q1_n0', queue_id=1, service_rate=0.7, total_served=4, total_service_time=296.0, utilization=0.8633333333333333, average_service_time=74.0), ServiceNodeStats(node_id='q1_n1', queue_id=1, service_rate=0.85, total_served=0, total_service_time=0.0, utilization=0.0, average_service_time=0.0), ServiceNodeStats(node_id='q2_n0', queue_id=2, service_rate=0.75, total_served=4, total_service_time=110.0, utilization=0.34375, average_service_time=27.5), ServiceNodeStats(node_id='q2_n1', queue_id=2, service_rate=0.9, total_served=0, total_service_time=0.0, utilization=0.0, average_service_time=0.0)] total_positions_recorded=23185 total_telemetry_records=0 simulation_duration=3600.0 completed_at=datetime.datetime(2026, 1, 1, 23, 37, 26, 753890)\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "KJKf",
+      "code_hash": "47132a31b719eb02645356058c8bb38c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<pre class='text-xs'>0.0</pre>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "geZE",
+      "code_hash": null,
+      "outputs": [],
+      "console": []
+    }
+  ]
+}
