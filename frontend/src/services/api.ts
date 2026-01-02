@@ -31,6 +31,18 @@ export interface SimulationRequest {
   border_config: BorderCrossingConfig;
   simulation_config?: SimulationConfig;
   phone_config?: PhoneConfig;
+  geojson_path?: string;
+}
+
+export interface BorderCrossing {
+  id: string;
+  name: string;
+  direction: string;
+  path: string;
+  description: string;
+  start_point: [number, number];
+  end_point: [number, number];
+  geometry_type: string;
 }
 
 export interface SimulationStatus {
@@ -190,6 +202,17 @@ export const api = {
 
     if (!response.ok) {
       throw new Error(`Failed to add service station: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // Get available border crossings
+  getBorderCrossings: async (): Promise<{ crossings: BorderCrossing[] }> => {
+    const response = await fetch(`${API_BASE_URL}/border-crossings`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get border crossings: ${response.statusText}`);
     }
 
     return response.json();

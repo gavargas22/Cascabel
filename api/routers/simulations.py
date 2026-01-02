@@ -8,9 +8,12 @@ FastAPI router for border crossing simulation endpoints.
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import uuid
 from datetime import datetime
+import os
+import json
+from pathlib import Path
 
 from cascabel.models.waitline import WaitLine
 from cascabel.models.border_crossing import ServiceNode
@@ -63,10 +66,23 @@ async def run_simulation(simulation_id: str):
 
     simulation = sim["simulation"]
     try:
-        print("executing multi-queue border crossing simulation...")
+        print(f"executing multi-queue border crossing simulation... ID: {simulation_id}")
+
+        # Wait for WebSocket clients to connect (up to 2 seconds)
+        import asyncio
+        for i in range(20):
+            if simulation_id in websockets and len(websockets[simulation_id]) > 0:
+                print(f"WebSocket clients connected: {len(websockets[simulation_id])}")
+                break
+            await asyncio.sleep(0.1)
+        else:
+            print(f"WARNING: No WebSocket clients connected after 2 seconds for {simulation_id}")
+
         simulation.simulation_state["running"] = True
+        iteration = 0
 
         while simulation.simulation_state["running"]:
+            iteration += 1
             dt = simulation.advance_time()
             simulation.border_crossing.advance_time(dt)
             if not simulation.should_continue():
@@ -102,13 +118,13 @@ async def run_simulation(simulation_id: str):
                         "id": str(car.car_id),
                         "position": position_coords,
                         "status": car.status,
-                        "velocity": car.velocity,
-                        "acceleration": car.acceleration,
-                        "queue_id": car.queue_id,
-                        "arrival_time": car.arrival_time,
-                        "service_start_time": car.service_start_time,
-                        "completion_time": car.completion_time,
-                        "distance_traveled": car.position,
+                        "velocity": float(car.velocity) if car.velocity is not None else None,
+                        "acceleration": float(car.acceleration) if car.acceleration is not None else None,
+                        "queue_id": int(car.queue_id) if car.queue_id is not None else None,
+                        "arrival_time": float(car.arrival_time) if car.arrival_time is not None else None,
+                        "service_start_time": float(car.service_start_time) if car.service_start_time is not None else None,
+                        "completion_time": float(car.completion_time) if car.completion_time is not None else None,
+                        "distance_traveled": float(car.position) if car.position is not None else None,
                     }
                     cars_data.append(car_data)
 
@@ -133,29 +149,47 @@ async def run_simulation(simulation_id: str):
                 if wait_times:
                     avg_wait_time = sum(wait_times) / len(wait_times)
 
+            # Get traffic control points from waitline
+            traffic_control_points = []
+            if simulation.border_crossing.queues:
+                first_queue = simulation.border_crossing.queues[0]
+                if first_queue.waitline:
+                    traffic_control_points = first_queue.waitline.traffic_control_points
+
             message = {
                 "type": "simulation_update",
                 "data": {
                     "cars": cars_data,
                     "queues": queues_data,
                     "metrics": {
-                        "total_arrivals": simulation.border_crossing.total_arrivals,
-                        "total_completions": simulation.border_crossing.total_completions,
-                        "average_wait_time": avg_wait_time,
+                        "total_arrivals": int(simulation.border_crossing.total_arrivals),
+                        "total_completions": int(simulation.border_crossing.total_completions),
+                        "average_wait_time": float(avg_wait_time) if avg_wait_time is not None else None,
                     },
+                    "traffic_control_points": traffic_control_points,
                 },
             }
 
+            # Log every 10 iterations
+            if iteration % 10 == 0:
+                print(f"Iteration {iteration}: {len(cars_data)} cars, {simulation.border_crossing.total_arrivals} arrivals, {simulation.border_crossing.total_completions} completions, sim_time={simulation.temporal_state['simulation_time']:.1f}s")
+                if len(cars_data) > 0:
+                    print(f"  First car position: {cars_data[0]['position']}, status: {cars_data[0]['status']}")
+                if iteration == 10:
+                    print(f"  Control points in message: {len(traffic_control_points)}")
+
             if simulation_id in websockets:
+                ws_count = len(websockets[simulation_id])
                 for ws in websockets[simulation_id]:
                     try:
                         await ws.send_json(message)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"Error sending WebSocket message: {e}")
+            else:
+                if iteration % 100 == 0:
+                    print(f"WARNING: No WebSocket clients for {simulation_id}")
 
             # Small delay to prevent flooding
-            import asyncio
-
             await asyncio.sleep(0.1)
 
         # Collect telemetry data
@@ -607,6 +641,13 @@ async def get_simulation_state(simulation_id: str):
                 node_state = node.get_state(i)
                 service_nodes.append(node_state.model_dump())
 
+        # Get traffic control points from waitline
+        traffic_control_points = []
+        if sim["simulation"].border_crossing.queues:
+            first_queue = sim["simulation"].border_crossing.queues[0]
+            if first_queue.waitline:
+                traffic_control_points = first_queue.waitline.traffic_control_points
+
         return {
             "simulation_id": simulation_id,
             "status": sim["status"],
@@ -614,6 +655,7 @@ async def get_simulation_state(simulation_id: str):
             "cars": cars,
             "service_nodes": service_nodes,
             "statistics": stats.model_dump(),
+            "traffic_control_points": traffic_control_points,
         }
 
     except Exception as e:
@@ -775,27 +817,48 @@ loaded_geojson = {}
 
 @router.get("/border-crossings")
 async def get_border_crossings():
-    """Get list of available border crossing GeoJSON files."""
-    import os
-
+    """Get list of available border crossing GeoJSON files with metadata."""
     crossings = []
 
     # Scan for geojson files in paths
     for root, dirs, files in os.walk("cascabel/paths"):
         for file in files:
-            if file.endswith(".geojson"):
+            if file.endswith(".geojson") and not file.endswith("copy.geojson"):
+                full_path = os.path.join(root, file)
+
                 # Extract crossing info from path
-                # Use os.path operations for cross-platform compatibility
                 rel_path = os.path.relpath(root, "cascabel/paths")
                 parts = rel_path.split(os.sep)
-                if len(parts) >= 1:
-                    direction = parts[0]  # mx2usa, usa2mx, etc.
-                    crossing_id = file.replace(".geojson", "")
-                    name = f"{crossing_id} ({direction})".replace("_", " ").title()
 
-                    crossings.append(
-                        {"id": crossing_id, "name": name, "direction": direction}
-                    )
+                # Read GeoJSON metadata
+                try:
+                    with open(full_path, 'r') as f:
+                        geojson_data = json.load(f)
+
+                    properties = geojson_data.get('features', [{}])[0].get('properties', {})
+                    geom = geojson_data.get('features', [{}])[0].get('geometry', {})
+
+                    direction = properties.get('direction', parts[0] if len(parts) >= 1 else 'unknown')
+                    crossing_name = properties.get('crossing_name', file.replace(".geojson", ""))
+
+                    # Construct relative path from cascabel/paths
+                    geojson_rel_path = os.path.relpath(full_path, "cascabel/paths")
+
+                    crossing = {
+                        "id": file.replace(".geojson", ""),
+                        "name": crossing_name,
+                        "direction": direction,
+                        "path": f"cascabel/paths/{geojson_rel_path}",
+                        "description": properties.get('description', ''),
+                        "start_point": properties.get('start_point'),
+                        "end_point": properties.get('end_point'),
+                        "geometry_type": geom.get('type', 'Unknown')
+                    }
+
+                    crossings.append(crossing)
+                except Exception as e:
+                    print(f"Error reading {full_path}: {e}")
+                    continue
 
     return {"crossings": crossings}
 

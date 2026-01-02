@@ -188,7 +188,20 @@
           ]
         ]
       },
-      "properties": {}
+      "properties": {
+        "epsg_code": "32613",
+        "crossing_name": "PDN",
+        "direction": "mx2usa",
+        "start_point": [
+          -106.48655886231933,
+          31.750029754477207
+        ],
+        "end_point": [
+          -106.4843579783431,
+          31.73896746992853
+        ],
+        "description": "Border crossing from Mexico to USA at Puente de las Americas (PDN)"
+      }
     }
   ]
 }

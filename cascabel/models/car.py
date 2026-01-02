@@ -29,11 +29,12 @@ class Car:
         else:
             self.phone_config = PhoneConfig()
 
-        # Physics properties (typical passenger car)
+        # Physics properties (typical passenger car in border crossing scenario)
         self.mass = 1500  # kg
-        self.max_acceleration = 3.0  # m/s²
-        self.max_deceleration = -5.0  # m/s² (braking)
-        self.max_velocity = 25.0  # m/s (90 km/h)
+        self.max_acceleration = 0.8  # m/s² (gentle acceleration in queue)
+        self.max_deceleration = -1.5  # m/s² (gentle braking)
+        self.max_velocity = 13.4  # m/s (30 mph = 48 km/h for approach)
+        self.queue_velocity = 1.34  # m/s (3 mph = 4.8 km/h for queue movement)
         self.length = 4.5  # meters
 
         # State tracking

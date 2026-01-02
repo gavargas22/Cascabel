@@ -32,6 +32,7 @@ class WaitLine:
     def __init__(self, geojson_path, speed_regime, line_length_seed):
         # self.sampling_path = self.decode_geojson_string(geojson_string)
         self.geojson_string = self.decode_geojson_string(geojson_path)
+        self.geojson_path = geojson_path
         self.speed_regime = speed_regime
         self.coordinates = self.get_coordinates()
         self.utm_zone = self.get_utm_zone()
@@ -44,6 +45,7 @@ class WaitLine:
             "officer_wait_factor": np.random.uniform(-0.1, 0.1),
         }
         self.regime_parameters = self.compute_regime_locations()
+        self.traffic_control_points = self.load_traffic_control_points()
 
     def decode_geojson_string(self, geojson_path):
         return gpd.read_file(geojson_path)
@@ -135,3 +137,76 @@ class WaitLine:
         P = pyproj.Proj(f"EPSG:326{self.utm_zone['utm_zone_number']:02d}")
         lon, lat = P(utm_point.x, utm_point.y, inverse=True)
         return [lon, lat]
+
+    def load_traffic_control_points(self):
+        """
+        Load traffic control points from GeoJSON Point features.
+        Calculates the position along the linestring for each point.
+
+        Returns:
+            list: Traffic control points with metadata and position_meters
+        """
+        import json
+        from shapely.geometry import Point
+
+        try:
+            with open(self.geojson_path, 'r') as f:
+                geojson_data = json.load(f)
+
+            control_points = []
+
+            # Iterate through all features
+            for feature in geojson_data.get('features', []):
+                # Skip the LineString feature
+                if feature.get('geometry', {}).get('type') != 'Point':
+                    continue
+
+                props = feature.get('properties', {})
+                geom = feature.get('geometry', {})
+
+                # Only process slowdown and booth types
+                if props.get('type') not in ['slowdown', 'booth']:
+                    continue
+
+                # Create Point from coordinates
+                coords = geom.get('coordinates', [])
+                if len(coords) < 2:
+                    continue
+
+                # Convert lat/lon to UTM
+                P = pyproj.Proj("EPSG:32613")
+                utm_x, utm_y = P(coords[0], coords[1])
+                point_utm = Point(utm_x, utm_y)
+
+                # Find nearest point on linestring to get position
+                position_meters = self.utm_linestring.project(point_utm)
+
+                # Build control point dict
+                control_point = {
+                    'type': 'sensor_array' if props['type'] == 'slowdown' else 'booth',
+                    'name': props.get('name', 'Unknown'),
+                    'description': props.get('description', ''),
+                    'position_meters': position_meters,
+                    'coordinates': coords
+                }
+
+                # Add type-specific properties
+                if props['type'] == 'slowdown':
+                    control_point['target_speed_mps'] = props.get('target_speed_mps', 2.24)
+                    control_point['slowdown_distance_meters'] = 30  # default
+                elif props['type'] == 'booth':
+                    control_point['stop_distance_meters'] = 40
+                    control_point['queue_start_meters'] = position_meters - 40
+
+                control_points.append(control_point)
+
+            print(f"Loaded {len(control_points)} traffic control points")
+            for cp in control_points:
+                print(f"  {cp['type']}: {cp['name']} at {cp['position_meters']:.1f}m")
+
+            return control_points
+        except Exception as e:
+            print(f"Warning: Could not load traffic control points: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
