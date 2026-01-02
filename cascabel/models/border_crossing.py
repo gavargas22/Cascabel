@@ -124,15 +124,17 @@ class BorderCrossing:
     Supports various queue assignment strategies and service configurations.
     """
 
-    def __init__(self, waitline, config):
+    def __init__(self, waitline, config, phone_config=None):
         """
         Initialize border crossing.
 
         Args:
             waitline: WaitLine object defining the path
             config: BorderCrossingConfig object or dict
+            phone_config: PhoneConfig object for telemetry generation
         """
         self.waitline = waitline
+        self.phone_config = phone_config
 
         # Use Pydantic model for configuration
         if isinstance(config, dict):
@@ -206,7 +208,7 @@ class BorderCrossing:
             return None, None
 
         # Add car to assigned queue
-        car = self.queues[queue_index].add_car(sampling_rate, phone_config)
+        car = self.queues[queue_index].add_car(sampling_rate, self.phone_config)
         if car:
             self.total_arrivals += 1
             car.queue_id = queue_index
