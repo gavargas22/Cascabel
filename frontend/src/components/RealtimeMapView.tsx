@@ -20,7 +20,7 @@ interface RealtimeMapViewProps {
 }
 
 // You'll need to get a Mapbox access token
-const MAPBOX_ACCESS_TOKEN = process.env.REACT_APP_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoiZXhhbXBsZSIsImEiOiJjbGV4YW1wbGUifQ.example';
+const MAPBOX_ACCESS_TOKEN = process.env.REACT_APP_MAPBOX_TOKEN;
 
 const RealtimeMapView: React.FC<RealtimeMapViewProps> = ({
   cars,
@@ -96,7 +96,7 @@ const RealtimeMapView: React.FC<RealtimeMapViewProps> = ({
         {...viewState}
         onMove={evt => setViewState(evt.viewState)}
         style={{ width: '100%', height: '100%' }}
-        mapStyle="mapbox://styles/mapbox/streets-v12"
+        mapStyle="mapbox://styles/mapbox/streets-v11"
         mapboxAccessToken={MAPBOX_ACCESS_TOKEN}
         onClick={handleMapClick}
         ref={mapRef}

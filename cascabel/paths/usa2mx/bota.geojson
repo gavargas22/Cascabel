@@ -392,7 +392,9 @@
           ]
         ]
       },
-      "properties": {}
+      "properties": {
+        "epsg_code": "32613"
+      }
     }
   ]
 }

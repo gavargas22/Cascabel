@@ -5,7 +5,7 @@ Simulation API Router
 FastAPI router for border crossing simulation endpoints.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, WebSocket
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, Optional
@@ -17,7 +17,9 @@ from cascabel.models.border_crossing import ServiceNode
 from cascabel.models.simulation import Simulation
 from cascabel.models.models import BorderCrossingConfig, SimulationConfig, PhoneConfig
 from cascabel.simulation.csv_generator import CSVGenerator
-from ..shared import simulations
+from cascabel.utils.geojson_loader import GeoJSONLoader
+from cascabel.utils.bounding_validator import constrain_point_to_bounds
+from ..shared import simulations, websockets
 
 router = APIRouter()
 
@@ -53,26 +55,157 @@ class TimeSpeedUpdate(BaseModel):
 
 async def run_simulation(simulation_id: str):
     """
-    Run the simulation in the background.
+    Run the simulation in the background with real-time WebSocket updates.
     """
     sim = simulations.get(simulation_id)
     if not sim:
         return
 
+    simulation = sim["simulation"]
     try:
-        simulation = sim["simulation"]
+        print("executing multi-queue border crossing simulation...")
+        simulation.simulation_state["running"] = True
 
-        # Run the simulation (this will block until completion)
-        simulation()
+        while simulation.simulation_state["running"]:
+            dt = simulation.advance_time()
+            simulation.border_crossing.advance_time(dt)
+            if not simulation.should_continue():
+                simulation.simulation_state["running"] = False
+            simulation.record_positions()
+
+            # Send real-time update
+            # Collect car data
+            cars_data = []
+            for queue in simulation.border_crossing.queues:
+                for car in queue.cars.values():
+                    # Get GPS position along waitline
+                    position_point = (
+                        simulation.waitline.compute_position_at_distance_from_start(
+                            car.position
+                        )
+                    )
+                    if position_point and simulation.bounds_polygon:
+                        # Constrain position to bounds
+                        position_point = constrain_point_to_bounds(
+                            position_point, simulation.bounds_polygon
+                        )
+
+                    # Convert UTM to lat/lon coordinates
+                    if position_point:
+                        position_coords = simulation.waitline.utm_to_latlon(
+                            position_point
+                        )
+                    else:
+                        position_coords = [0, 0]
+
+                    car_data = {
+                        "id": str(car.car_id),
+                        "position": position_coords,
+                        "status": car.status,
+                        "velocity": car.velocity,
+                        "acceleration": car.acceleration,
+                        "queue_id": car.queue_id,
+                        "arrival_time": car.arrival_time,
+                        "service_start_time": car.service_start_time,
+                        "completion_time": car.completion_time,
+                        "distance_traveled": car.position,
+                    }
+                    cars_data.append(car_data)
+
+            # Collect queue data
+            queues_data = []
+            for i, queue in enumerate(simulation.border_crossing.queues):
+                throughput = len([node for node in queue.service_nodes if node.is_busy])
+                queues_data.append(
+                    {"length": len(queue.car_positions), "throughput": throughput}
+                )
+
+            # Calculate average wait time
+            completed_cars = [
+                car
+                for queue in simulation.border_crossing.queues
+                for car in queue.cars.values()
+                if (
+                    car.status == "completed"
+                    and car.service_start_time
+                    and car.arrival_time
+                )
+            ]
+            avg_wait_time = None
+            if completed_cars:
+                total_wait = sum(
+                    car.service_start_time - car.arrival_time for car in completed_cars
+                )
+                avg_wait_time = total_wait / len(completed_cars)
+
+            message = {
+                "type": "simulation_update",
+                "data": {
+                    "cars": cars_data,
+                    "queues": queues_data,
+                    "metrics": {
+                        "total_arrivals": simulation.border_crossing.total_arrivals,
+                        "total_completions": simulation.border_crossing.total_completions,
+                        "average_wait_time": avg_wait_time,
+                    },
+                },
+            }
+
+            if simulation_id in websockets:
+                for ws in websockets[simulation_id]:
+                    try:
+                        await ws.send_json(message)
+                    except Exception:
+                        pass
+
+            # Small delay to prevent flooding
+            import asyncio
+
+            await asyncio.sleep(0.1)
+
+        # Collect telemetry data
+        if hasattr(simulation, "telemetry_data"):
+            sim["telemetry_data"] = simulation.telemetry_data
 
         # Update final status
         final_stats = simulation.get_statistics()
         sim["current_time"] = final_stats.simulation_duration
         sim["status"] = "completed"
 
+        final_status = {
+            "simulation_id": simulation_id,
+            "status": "completed",
+            "progress": 1.0,
+            "current_time": final_stats.simulation_duration,
+            "total_arrivals": final_stats.total_arrivals,
+            "total_completions": final_stats.total_completions,
+            "message": "Simulation completed",
+        }
+        if simulation_id in websockets:
+            for ws in websockets[simulation_id]:
+                try:
+                    await ws.send_json(final_status)
+                except Exception:
+                    pass
+
     except Exception as e:
         sim["status"] = "failed"
         sim["error"] = str(e)
+        error_status = {
+            "simulation_id": simulation_id,
+            "status": "failed",
+            "progress": 0.0,
+            "current_time": 0.0,
+            "total_arrivals": 0,
+            "total_completions": 0,
+            "message": str(e),
+        }
+        if simulation_id in websockets:
+            for ws in websockets[simulation_id]:
+                try:
+                    await ws.send_json(error_status)
+                except Exception:
+                    pass
 
 
 @router.post("/simulate", response_model=Dict[str, str])
@@ -98,6 +231,7 @@ async def start_simulation(
             waitline=waitline,
             border_config=request.border_config,
             simulation_config=request.simulation_config,
+            phone_config=request.phone_config,
         )
 
         # Store simulation state
@@ -137,7 +271,6 @@ async def start_grand_simulation(
 
     Returns simulation ID and WebSocket URL for realtime streaming.
     """
-    # Set defaults for grand simulation
     if request.simulation_config is None:
         request.simulation_config = SimulationConfig(
             max_simulation_time=86400.0,  # 24 hours
@@ -163,6 +296,7 @@ async def start_grand_simulation(
             waitline=waitline,
             border_config=request.border_config,
             simulation_config=request.simulation_config,
+            phone_config=request.phone_config,
         )
 
         # Store simulation state
@@ -235,14 +369,88 @@ async def get_simulation_telemetry(simulation_id: str, format: str = "csv"):
     sim = simulations[simulation_id]
 
     if not sim["telemetry_data"]:
-        raise HTTPException(status_code=404, detail="No telemetry data available yet")
+        # For running simulations, collect any available telemetry data
+        if sim["status"] == "running" and "simulation" in sim:
+            simulation = sim["simulation"]
+            if hasattr(simulation, "telemetry_data") and simulation.telemetry_data:
+                sim["telemetry_data"] = simulation.telemetry_data
+
+        # If still no data, return empty CSV with headers
+        if not sim["telemetry_data"]:
+            csv_gen = CSVGenerator()
+            # Return CSV with just headers
+            empty_data = [
+                {
+                    "timestamp": 0.0,
+                    "car_id": 0,
+                    "latitude": 0.0,
+                    "longitude": 0.0,
+                    "altitude": 0.0,
+                    "speed": 0.0,
+                    "heading": 0.0,
+                    "accelerometer_x": 0.0,
+                    "accelerometer_y": 0.0,
+                    "accelerometer_z": 0.0,
+                    "gyroscope_x": 0.0,
+                    "gyroscope_y": 0.0,
+                    "gyroscope_z": 0.0,
+                }
+            ]
+            csv_content = csv_gen.generate_csv(empty_data)
+
+            if format == "json":
+                return {"telemetry": [], "message": "No telemetry data available yet"}
+            else:
+                return StreamingResponse(
+                    iter([csv_content]),
+                    media_type="text/csv",
+                    headers={
+                        "Content-Disposition": (
+                            f"attachment; filename=simulation_{simulation_id}_empty.csv"
+                        )
+                    },
+                )
+
+    # Validate telemetry data
+    validated_data = []
+    for record in sim["telemetry_data"]:
+        try:
+            # Basic validation
+            if not isinstance(record, dict):
+                continue
+            if "locationLatitude" not in record or "locationLongitude" not in record:
+                continue
+            lat = record.get("locationLatitude", 0)
+            lon = record.get("locationLongitude", 0)
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                continue
+
+            validated_data.append(record)
+        except (TypeError, ValueError):
+            continue  # Skip invalid records
+
+    if not validated_data:
+        raise HTTPException(status_code=500, detail="No valid telemetry data found")
 
     csv_gen = CSVGenerator()
-    csv_content = csv_gen.generate_csv(sim["telemetry_data"])
+    csv_content = csv_gen.generate_csv(validated_data)
 
     if format == "json":
-        # Convert CSV to JSON (simplified)
-        return {"telemetry": sim["telemetry_data"]}
+        # Convert to simplified JSON format for frontend
+        simplified_data = []
+        for record in validated_data:
+            simplified_data.append(
+                {
+                    "timestamp": record.get("loggingTime", ""),
+                    "car_id": str(record.get("identifierForVendor", "unknown")),
+                    "latitude": record.get("locationLatitude", 0),
+                    "longitude": record.get("locationLongitude", 0),
+                    "velocity": record.get("locationSpeed", 0),
+                    "status": "arriving",  # Default status
+                    "queue_id": None,
+                }
+            )
+        return {"telemetry": simplified_data}
     else:
         # Return as CSV file
         return StreamingResponse(
@@ -530,18 +738,153 @@ async def add_service_station(simulation_id: str, queue_id: int = Query(0)):
         raise HTTPException(status_code=400, detail="Invalid queue ID")
 
     queue = border_crossing.queues[queue_id]
-    
+
     # Create new service node
     node_id = f"q{queue_id}_n{len(queue.service_nodes)}"
     service_rate = 3.0  # Default service rate
     new_node = ServiceNode(node_id, service_rate)
-    
+
     # Add to queue and border crossing
     queue.service_nodes.append(new_node)
     border_crossing.service_nodes.append(new_node)
 
-    return {
-        "station_id": node_id,
-        "queue_id": queue_id,
-        "service_rate": service_rate
-    }
+    return {"station_id": node_id, "queue_id": queue_id, "service_rate": service_rate}
+
+
+@router.websocket("/ws/{simulation_id}")
+async def websocket_endpoint(websocket: WebSocket, simulation_id: str):
+    # Allow connections from frontend
+    allowed_origins = ["http://localhost:3000"]
+    origin = websocket.headers.get("origin")
+    if origin not in allowed_origins:
+        await websocket.close(code=1008)  # Policy violation
+        return
+    await websocket.accept()
+    if simulation_id not in websockets:
+        websockets[simulation_id] = []
+    websockets[simulation_id].append(websocket)
+    try:
+        while True:
+            # Keep connection alive, updates sent from run_simulation
+            await websocket.receive_text()
+    except Exception:
+        pass
+    finally:
+        if simulation_id in websockets and websocket in websockets[simulation_id]:
+            websockets[simulation_id].remove(websocket)
+
+
+# Global variable to store loaded GeoJSON data
+loaded_geojson = {}
+
+
+@router.get("/border-crossings")
+async def get_border_crossings():
+    """Get list of available border crossing GeoJSON files."""
+    import os
+
+    crossings = []
+
+    # Scan for geojson files in paths
+    for root, dirs, files in os.walk("cascabel/paths"):
+        for file in files:
+            if file.endswith(".geojson"):
+                # Extract crossing info from path
+                # Use os.path operations for cross-platform compatibility
+                rel_path = os.path.relpath(root, "cascabel/paths")
+                parts = rel_path.split(os.sep)
+                if len(parts) >= 1:
+                    direction = parts[0]  # mx2usa, usa2mx, etc.
+                    crossing_id = file.replace(".geojson", "")
+                    name = f"{crossing_id} ({direction})".replace("_", " ").title()
+
+                    crossings.append(
+                        {"id": crossing_id, "name": name, "direction": direction}
+                    )
+
+    return {"crossings": crossings}
+
+
+@router.post("/border-crossings/{crossing_id}/load")
+async def load_border_crossing(crossing_id: str):
+    """Load and validate a specific border crossing GeoJSON file."""
+    import os
+
+    # Find the geojson file
+    geojson_path = None
+    for root, dirs, files in os.walk("cascabel/paths"):
+        for file in files:
+            if file == f"{crossing_id}.geojson":
+                geojson_path = os.path.join(root, file)
+                break
+        if geojson_path:
+            break
+
+    if not geojson_path:
+        raise HTTPException(status_code=404, detail="Border crossing not found")
+
+    try:
+        loader = GeoJSONLoader(geojson_path)
+        # Store in global cache
+        loaded_geojson[crossing_id] = loader
+
+        return {
+            "status": "loaded",
+            "polygon_bounds": loader.polygon_utm.wkt,
+            "start_point": [loader.start_point_utm.x, loader.start_point_utm.y],
+            "stop_point": [loader.stop_point_utm.x, loader.stop_point_utm.y],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid GeoJSON: {str(e)}")
+
+
+@router.get("/simulations/config")
+async def get_simulation_config():
+    """Get current simulation configuration including loaded boundary info."""
+    config = {"available_geojson": list(loaded_geojson.keys()), "bounds": {}}
+
+    # Include loaded boundary information
+    for crossing_id, loader in loaded_geojson.items():
+        config["bounds"][crossing_id] = {
+            "utm_epsg": loader.utm_epsg_code,
+            "polygon_wkt": loader.polygon_utm.wkt,
+            "start_point": [loader.start_point_utm.x, loader.start_point_utm.y],
+            "stop_point": [loader.stop_point_utm.x, loader.stop_point_utm.y],
+        }
+
+    return config
+
+
+@router.get("/geojson/{path_name}")
+async def get_geojson(path_name: str):
+    """
+    Get GeoJSON data for border crossing paths.
+
+    Args:
+        path_name: Name of the path (e.g., "usa2mx/bota")
+
+    Returns:
+        GeoJSON FeatureCollection
+    """
+    import json
+    import os
+
+    # Construct absolute path to the GeoJSON file
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    geojson_path = os.path.join(root_dir, "cascabel", "paths", f"{path_name}.geojson")
+
+    print(f"DEBUG: Root dir = {root_dir}")
+    print(f"DEBUG: Looking for file at: {geojson_path}")
+    print(f"DEBUG: File exists: {os.path.exists(geojson_path)}")
+
+    if not os.path.exists(geojson_path):
+        raise HTTPException(
+            status_code=404, detail=f"GeoJSON file not found: {path_name}"
+        )
+
+    try:
+        with open(geojson_path, "r") as f:
+            geojson_data = json.load(f)
+        return geojson_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading GeoJSON: {str(e)}")

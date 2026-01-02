@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "description": "Claude Code settings for Cascabel project"
+  },
+  "agents": {
+    "enabled": true,
+    "autoDelegate": true
+  },
+  "skills": {
+    "enabled": true
+  },
+  "context": {
+    "alwaysInclude": [
+      ".claude/CLAUDE.md",
+      ".agentic-docs/product/mission-lite.md",
+      ".agentic-docs/product/tech-stack.md"
+    ]
+  },
+  "git": {
+    "branchNaming": {
+      "stripDatePrefix": true,
+      "pattern": "feature/{spec-name}"
+    },
+    "commitConvention": "conventional"
+  },
+  "testing": {
+    "requireBeforeCommit": true,
+    "framework": "pytest"
+  },
+  "documentation": {
+    "specsDirectory": ".agentic-docs/specs",
+    "productDirectory": ".agentic-docs/product"
+  }
+}

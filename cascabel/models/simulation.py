@@ -1,15 +1,13 @@
 from shapely.geometry import MultiPoint
 import geopandas as gpd
-from datetime import datetime
+from datetime import datetime, timedelta
 from .border_crossing import BorderCrossing
 from .models import (
     SimulationConfig,
     BorderCrossingConfig,
     SimulationResult,
-    BorderCrossingStats,
-    QueueStats,
-    ServiceNodeStats,
 )
+from cascabel.utils.bounding_validator import constrain_point_to_bounds
 
 
 class Simulation:
@@ -20,7 +18,14 @@ class Simulation:
     Multi-queue, multi-service-node border crossing simulation.
     """
 
-    def __init__(self, waitline, border_config, simulation_config=None):
+    def __init__(
+        self,
+        waitline,
+        border_config,
+        simulation_config=None,
+        phone_config=None,
+        bounds_polygon=None,
+    ):
         """
         Initialize simulation.
 
@@ -28,9 +33,14 @@ class Simulation:
             waitline: WaitLine object defining the path
             border_config: BorderCrossingConfig object
             simulation_config: SimulationConfig object (optional)
+            phone_config: PhoneConfig object for telemetry (optional)
+            bounds_polygon: Shapely Polygon for bounding area (optional)
         """
         self.waitline = waitline
+        self.bounds_polygon = bounds_polygon
         self.total_distance = self.waitline.destiny["line_length"]
+        self.phone_config = phone_config
+        self.start_time = datetime.now()  # Record when simulation starts
 
         # Use Pydantic models for configuration
         if isinstance(border_config, dict):
@@ -51,7 +61,9 @@ class Simulation:
             self.simulation_config = simulation_config
 
         # Initialize border crossing with multiple queues and service nodes
-        self.border_crossing = BorderCrossing(waitline, self.border_config)
+        self.border_crossing = BorderCrossing(
+            waitline, self.border_config, self.phone_config
+        )
 
         self.location_points = []
 
@@ -114,16 +126,33 @@ class Simulation:
 
     def record_positions(self):
         """
-        Record current positions of all cars for visualization.
+        Record current positions and collect telemetry.
         """
+        current_time = self.temporal_state["simulation_time"]
+        current_datetime = self.start_time + timedelta(seconds=current_time)
+
         for queue in self.border_crossing.queues:
             for car in queue.cars.values():
                 # Get GPS position along waitline
                 position_point = self.waitline.compute_position_at_distance_from_start(
                     car.position
                 )
+                if position_point and self.bounds_polygon:
+                    # Constrain position to bounds
+                    position_point = constrain_point_to_bounds(
+                        position_point, self.bounds_polygon
+                    )
                 if position_point:
                     self.location_points.append(position_point)
+
+                # Generate telemetry data for this car
+                if car.telemetry_gen:
+                    telemetry_record = car.generate_telemetry(current_datetime)
+                    if telemetry_record:
+                        # Store telemetry data (will be collected by API)
+                        if not hasattr(self, "telemetry_data"):
+                            self.telemetry_data = []
+                        self.telemetry_data.append(telemetry_record)
 
     def get_statistics(self):
         """
