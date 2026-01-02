@@ -3,8 +3,21 @@
   "features": [
     {
       "type": "Feature",
+      "properties": {
+        "epsg_code": "32613",
+        "crossing_name": "Bota",
+        "direction": "usa2mx",
+        "start_point": [
+          -106.44580022765757,
+          31.772743914725275
+        ],
+        "end_point": [
+          -106.45193831834666,
+          31.762685795121843
+        ],
+        "description": "Border crossing from USA to Mexico at Bota port of entry"
+      },
       "geometry": {
-        "type": "LineString",
         "coordinates": [
           [
             -106.44580022765757,
@@ -387,24 +400,11 @@
             31.76279183876901
           ],
           [
-            -106.45193831834666,
-            31.762685795121843
+            -106.4520180474301,
+            31.762105149132015
           ]
-        ]
-      },
-      "properties": {
-        "epsg_code": "32613",
-        "crossing_name": "Bota",
-        "direction": "usa2mx",
-        "start_point": [
-          -106.44580022765757,
-          31.772743914725275
         ],
-        "end_point": [
-          -106.45193831834666,
-          31.762685795121843
-        ],
-        "description": "Border crossing from USA to Mexico at Bota port of entry"
+        "type": "LineString"
       }
     },
     {

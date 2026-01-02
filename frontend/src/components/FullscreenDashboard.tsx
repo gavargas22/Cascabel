@@ -7,12 +7,11 @@ import {
   NumericInput,
   HTMLSelect,
   Collapse,
-  Icon,
   Tag,
   Callout,
 } from '@blueprintjs/core';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { api, BorderCrossingConfig, SimulationConfig, PhoneConfig, BorderCrossing } from '../services/api';
+import { api, BorderCrossingConfig, SimulationConfig, PhoneConfig, PhysicsConfig, BorderCrossing } from '../services/api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -35,7 +34,19 @@ interface SimulationUpdate {
       total_arrivals: number;
       total_completions: number;
       average_wait_time?: number | null;
+      simulation_time?: number;
     };
+    traffic_control_points?: Array<{
+      type: string;
+      name: string;
+      description: string;
+      position_meters: number;
+      coordinates: [number, number];
+      target_speed_mps?: number;
+      slowdown_distance_meters?: number;
+      stop_distance_meters?: number;
+      queue_start_meters?: number;
+    }>;
   };
 }
 
@@ -45,6 +56,30 @@ const FullscreenDashboard: React.FC = () => {
   const [simulationData, setSimulationData] = useState<SimulationUpdate['data'] | null>(null);
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
   const [geojsonData, setGeojsonData] = useState<any>(null);
+
+  // Helper to format car status for display
+  const formatStatus = (status: string): string => {
+    const statusMap: Record<string, string> = {
+      'approaching': 'Approaching',
+      'queued': 'Waiting in Queue',
+      'serving': 'Being Served',
+      'completed': 'Completed',
+    };
+    return statusMap[status] || status;
+  };
+
+  // Helper to format simulation time
+  const formatSimTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const hours = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+
+    if (hours > 0) {
+      return `${hours}:${remainMins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   // Panel visibility states
   const [showConfig, setShowConfig] = useState(true);
@@ -69,7 +104,16 @@ const FullscreenDashboard: React.FC = () => {
     enable_position_tracking: true,
   });
 
+  const [physicsConfig, setPhysicsConfig] = useState<PhysicsConfig>({
+    min_speed_mps: 12.1,  // 27 mph
+    max_speed_mps: 14.7,  // 33 mph
+    safe_distance_meters: 3.0,
+    max_acceleration: 0.75,
+    max_deceleration: 1.25,
+  });
+
   const [isRunning, setIsRunning] = useState(false);
+  const [showPhysicsConfig, setShowPhysicsConfig] = useState(false);
 
   // Service time range (in minutes)
   const [serviceTimeMin, setServiceTimeMin] = useState(3);
@@ -187,6 +231,7 @@ const FullscreenDashboard: React.FC = () => {
           gyro_noise: 0.01,
           device_orientation: 'portrait',
         },
+        physics_config: physicsConfig,
         geojson_path: geojsonPath,
       });
       setSimulationId(response.simulation_id);
@@ -199,10 +244,30 @@ const FullscreenDashboard: React.FC = () => {
 
   const handleStopSimulation = async () => {
     if (simulationId && ws) {
-      ws.close();
-      setSimulationId(null);
-      setSimulationData(null);
-      setIsRunning(false);
+      try {
+        // Call the stop endpoint to kill the simulation and save data
+        const response = await fetch(`${API_BASE_URL}/api/simulations/${simulationId}/stop`, {
+          method: 'POST',
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('Simulation stopped:', result);
+          alert(`Simulation stopped successfully!\n${result.message}\nDatabase: ${result.database_path}`);
+        } else {
+          console.error('Failed to stop simulation:', await response.text());
+          alert('Failed to stop simulation properly, but closing connection...');
+        }
+      } catch (error) {
+        console.error('Error stopping simulation:', error);
+        alert('Error stopping simulation, but closing connection...');
+      } finally {
+        // Close websocket and reset state regardless
+        ws.close();
+        setSimulationId(null);
+        setSimulationData(null);
+        setIsRunning(false);
+      }
     }
   };
 
@@ -251,25 +316,6 @@ const FullscreenDashboard: React.FC = () => {
             </Source>
           </>
         )}
-
-        {/* Test Marker - should always show in center of border path */}
-        <Marker
-          longitude={-106.4519}
-          latitude={31.7641}
-          anchor="center"
-        >
-          <div
-            style={{
-              width: '30px',
-              height: '30px',
-              borderRadius: '50%',
-              backgroundColor: '#ff00ff',
-              border: '4px solid #ffffff',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.8)',
-            }}
-            title="Test Marker - Center"
-          />
-        </Marker>
 
         {/* Car Markers */}
         {simulationData?.cars.map((car) => {
@@ -478,6 +524,99 @@ const FullscreenDashboard: React.FC = () => {
             </div>
           </Collapse>
         </Card>
+
+        {/* Physics Configuration */}
+        <Card style={{ marginBottom: '10px' }}>
+          <div
+            style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            onClick={() => setShowPhysicsConfig(!showPhysicsConfig)}
+          >
+            <h3 style={{ margin: 0 }}>Physics & Behavior</h3>
+            <span style={{ fontSize: '20px' }}>{showPhysicsConfig ? '▲' : '▼'}</span>
+          </div>
+
+          <Collapse isOpen={showPhysicsConfig}>
+            <div style={{ marginTop: '10px' }}>
+              <FormGroup label="Speed Range (mph)" inline>
+                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                  <NumericInput
+                    value={Math.round(physicsConfig.min_speed_mps * 2.237)}
+                    onValueChange={(val) =>
+                      setPhysicsConfig({ ...physicsConfig, min_speed_mps: val / 2.237 })
+                    }
+                    min={20}
+                    max={35}
+                    stepSize={1}
+                    style={{ width: '60px' }}
+                    disabled={isRunning}
+                    placeholder="Min"
+                  />
+                  <span>-</span>
+                  <NumericInput
+                    value={Math.round(physicsConfig.max_speed_mps * 2.237)}
+                    onValueChange={(val) =>
+                      setPhysicsConfig({ ...physicsConfig, max_speed_mps: val / 2.237 })
+                    }
+                    min={25}
+                    max={40}
+                    stepSize={1}
+                    style={{ width: '60px' }}
+                    disabled={isRunning}
+                    placeholder="Max"
+                  />
+                </div>
+              </FormGroup>
+
+              <FormGroup label="Safe Distance (meters)" inline>
+                <NumericInput
+                  value={physicsConfig.safe_distance_meters}
+                  onValueChange={(val) =>
+                    setPhysicsConfig({ ...physicsConfig, safe_distance_meters: val })
+                  }
+                  min={2}
+                  max={10}
+                  stepSize={0.5}
+                  style={{ width: '80px' }}
+                  disabled={isRunning}
+                />
+              </FormGroup>
+
+              <FormGroup label="Acceleration (m/s²)" inline>
+                <NumericInput
+                  value={physicsConfig.max_acceleration}
+                  onValueChange={(val) =>
+                    setPhysicsConfig({ ...physicsConfig, max_acceleration: val })
+                  }
+                  min={0.3}
+                  max={2.0}
+                  stepSize={0.05}
+                  minorStepSize={0.01}
+                  style={{ width: '80px' }}
+                  disabled={isRunning}
+                />
+              </FormGroup>
+
+              <FormGroup label="Deceleration (m/s²)" inline>
+                <NumericInput
+                  value={physicsConfig.max_deceleration}
+                  onValueChange={(val) =>
+                    setPhysicsConfig({ ...physicsConfig, max_deceleration: val })
+                  }
+                  min={0.5}
+                  max={3.0}
+                  stepSize={0.05}
+                  minorStepSize={0.01}
+                  style={{ width: '80px' }}
+                  disabled={isRunning}
+                />
+              </FormGroup>
+
+              <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#f5f8fa', borderRadius: '4px', fontSize: '11px', color: '#5c7080' }}>
+                <strong>ℹ️ Physics:</strong> Higher acceleration = more aggressive driving. Safe distance controls spacing between cars in queue.
+              </div>
+            </div>
+          </Collapse>
+        </Card>
       </div>
 
       {/* Floating Metrics Panel - Top Right (below nav controls) */}
@@ -524,6 +663,19 @@ const FullscreenDashboard: React.FC = () => {
                     {simulationData.queues.reduce((sum, q) => sum + q.throughput, 0)}
                   </Tag>
                 </div>
+                {simulationData.metrics.simulation_time !== undefined && (
+                  <div style={{ marginBottom: '12px', padding: '10px', backgroundColor: '#e8f4f8', borderRadius: '4px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '11px', color: '#5c7080', marginBottom: '4px' }}>
+                      Simulation Time
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#106ba3', fontFamily: 'monospace' }}>
+                      {formatSimTime(simulationData.metrics.simulation_time)}
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#5c7080', marginTop: '4px' }}>
+                      {simulationData.metrics.simulation_time >= 3600 ? '(hours:minutes:seconds)' : '(minutes:seconds)'}
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <strong>Total Arrivals:</strong>
                   <span>{simulationData.metrics.total_arrivals}</span>
@@ -532,20 +684,26 @@ const FullscreenDashboard: React.FC = () => {
                   <strong>Total Completions:</strong>
                   <span>{simulationData.metrics.total_completions}</span>
                 </div>
-                {simulationData.metrics.average_wait_time !== null &&
-                  simulationData.metrics.average_wait_time !== undefined && (
-                    <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#f0f8ff', borderRadius: '4px' }}>
-                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
-                        Average Wait Time
-                      </div>
-                      <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#007bff' }}>
-                        {simulationData.metrics.average_wait_time.toFixed(1)}s
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#666' }}>
-                        ({(simulationData.metrics.average_wait_time / 60).toFixed(2)} min)
-                      </div>
+                <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#f0f8ff', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+                    Average Wait Time
+                  </div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#007bff' }}>
+                    {simulationData.metrics.average_wait_time !== null && simulationData.metrics.average_wait_time !== undefined
+                      ? `${simulationData.metrics.average_wait_time.toFixed(1)}s`
+                      : '—'}
+                  </div>
+                  {simulationData.metrics.average_wait_time !== null && simulationData.metrics.average_wait_time !== undefined && (
+                    <div style={{ fontSize: '12px', color: '#666' }}>
+                      ({(simulationData.metrics.average_wait_time / 60).toFixed(2)} min)
                     </div>
                   )}
+                  {(simulationData.metrics.average_wait_time === null || simulationData.metrics.average_wait_time === undefined) && (
+                    <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic' }}>
+                      Waiting for cars to complete service...
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <Callout intent="warning" icon="info-sign">

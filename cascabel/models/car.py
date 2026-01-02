@@ -31,10 +31,10 @@ class Car:
 
         # Physics properties (typical passenger car in border crossing scenario)
         self.mass = 1500  # kg
-        self.max_acceleration = 0.8  # m/s² (gentle acceleration in queue)
-        self.max_deceleration = -1.5  # m/s² (gentle braking)
-        self.max_velocity = 13.4  # m/s (30 mph = 48 km/h for approach)
-        self.queue_velocity = 1.34  # m/s (3 mph = 4.8 km/h for queue movement)
+        self.max_acceleration = 0.75  # m/s² (gentle acceleration - realistic for queue)
+        self.max_deceleration = -1.25  # m/s² (gentle braking - realistic for queue)
+        self.max_velocity = 13.4112  # m/s (30 mph exact = 48 km/h for approach)
+        self.queue_velocity = 1.34112  # m/s (3 mph exact = 4.8 km/h for queue movement)
         self.length = 4.5  # meters
 
         # State tracking
