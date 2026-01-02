@@ -12,35 +12,5 @@
       },
       "console": "integratedTerminal"
     },
-    {
-      "name": "Debug Frontend",
-      "type": "node",
-      "request": "launch",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "start"
-      ],
-      "cwd": "${workspaceFolder}/frontend",
-      "console": "integratedTerminal",
-      "env": {
-        "BROWSER": "none"
-      }
-    },
-    {
-      "name": "Debug Frontend in Chrome",
-      "type": "chrome",
-      "request": "launch",
-      "url": "http://localhost:3000",
-      "webRoot": "${workspaceFolder}/frontend/src"
-    }
-  ],
-  "compounds": [
-    {
-      "name": "Debug Full Application",
-      "configurations": [
-        "Debug API",
-        "Debug Frontend"
-      ]
-    }
   ]
 }
