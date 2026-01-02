@@ -118,9 +118,11 @@ class Simulation:
             < self.simulation_state["max_simulation_time"]
         )
 
-        # Continue if there are cars in system or recent arrivals
+        # Continue if there are cars in system or we're still in the warmup period
+        # Use 10 minutes (600 seconds) as warmup to allow queue to build up
         total_cars = sum(len(queue.cars) for queue in self.border_crossing.queues)
-        activity_check = total_cars > 0 or self.temporal_state["simulation_time"] < 300
+        warmup_time = 600  # 10 minutes to build up initial queue
+        activity_check = total_cars > 0 or self.temporal_state["simulation_time"] < warmup_time
 
         return time_check and activity_check
 

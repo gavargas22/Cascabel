@@ -1,0 +1,3 @@
+# Spec Summary (Lite)
+
+Implement a mapview page for real-time simulation visualization, showing car movements on a border crossing map, live data charts, and adjustable visualization parameters during active simulations. Also provide after-the-fact visualization of completed simulations using telemetry data to show individual car paths and movements, with historical playback controls for reviewing simulation history, and a car list with detailed dashboards for monitoring individual vehicle metrics.
