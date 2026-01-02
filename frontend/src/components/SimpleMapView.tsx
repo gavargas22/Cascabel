@@ -8,6 +8,18 @@ interface SimpleMapViewProps {
   simulationId: string;
 }
 
+interface TrafficControlPoint {
+  type: 'sensor_array' | 'booth';
+  name: string;
+  description: string;
+  position_meters: number;
+  coordinates: [number, number]; // [longitude, latitude]
+  target_speed_mps?: number;
+  slowdown_distance_meters?: number;
+  stop_distance_meters?: number;
+  queue_start_meters?: number;
+}
+
 interface SimulationUpdate {
   type: 'simulation_update';
   data: {
@@ -28,6 +40,7 @@ interface SimulationUpdate {
       total_completions: number;
       average_wait_time?: number;
     };
+    traffic_control_points?: TrafficControlPoint[];
   };
 }
 
@@ -136,6 +149,56 @@ const SimpleMapView: React.FC<SimpleMapViewProps> = ({ simulationId }) => {
                       }}
                       title={`Car ${car.id} - ${car.status}`}
                     />
+                  </Marker>
+                ))}
+
+                {/* Render traffic control point markers */}
+                {simulationData?.traffic_control_points?.map((cp, index) => (
+                  <Marker
+                    key={`cp-${index}`}
+                    longitude={cp.coordinates[0]}
+                    latitude={cp.coordinates[1]}
+                    anchor="center"
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: cp.type === 'booth' ? '24px' : '20px',
+                          height: cp.type === 'booth' ? '24px' : '20px',
+                          borderRadius: cp.type === 'booth' ? '4px' : '50%',
+                          backgroundColor: cp.type === 'booth' ? '#e74c3c' : '#f39c12',
+                          border: '3px solid #fff',
+                          boxShadow: '0 0 8px rgba(0,0,0,0.5)',
+                          cursor: 'pointer',
+                        }}
+                        title={`${cp.name}\n${cp.description}\nPosition: ${cp.position_meters.toFixed(0)}m${
+                          cp.target_speed_mps
+                            ? `\nTarget Speed: ${(cp.target_speed_mps * 2.237).toFixed(1)} mph`
+                            : ''
+                        }`}
+                      />
+                      <div
+                        style={{
+                          marginTop: '4px',
+                          padding: '2px 6px',
+                          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                          border: '1px solid #ccc',
+                          borderRadius: '3px',
+                          fontSize: '10px',
+                          fontWeight: 'bold',
+                          whiteSpace: 'nowrap',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                        }}
+                      >
+                        {cp.type === 'booth' ? '🚧' : '⚠️'} {cp.name}
+                      </div>
+                    </div>
                   </Marker>
                 ))}
 

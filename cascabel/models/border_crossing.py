@@ -150,6 +150,9 @@ class BorderCrossing:
         # Car routing
         self.next_queue_index = 0  # For round-robin assignment
 
+        # Global car ID counter (shared across all queues)
+        self.next_car_id = 1
+
         # Arrival timing
         self.next_arrival_time = 0.0
         self.arrival_process = None  # Will be set if config has cbp_parser
@@ -210,13 +213,17 @@ class BorderCrossing:
         if queue_index is None:
             return None, None
 
-        # Add car to assigned queue
-        car = self.queues[queue_index].add_car(sampling_rate, self.phone_config)
+        # Get globally unique car ID
+        car_id = self.next_car_id
+        self.next_car_id += 1
+
+        # Add car to assigned queue with global ID
+        car = self.queues[queue_index].add_car(car_id, sampling_rate, self.phone_config)
         if car:
             self.total_arrivals += 1
             car.queue_id = queue_index
-            # Set arrival time when car is added to queue
-            car.set_status("queued", self.current_time)
+            # Don't override the status - let it remain "approaching" as set by queue.add_car()
+            # The car will transition to "queued" when it reaches the booth
 
         return car, queue_index
 

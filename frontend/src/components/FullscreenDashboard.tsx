@@ -12,7 +12,7 @@ import {
   Callout,
 } from '@blueprintjs/core';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { api, BorderCrossingConfig, SimulationConfig, PhoneConfig } from '../services/api';
+import { api, BorderCrossingConfig, SimulationConfig, PhoneConfig, BorderCrossing } from '../services/api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -49,14 +49,14 @@ const FullscreenDashboard: React.FC = () => {
   // Panel visibility states
   const [showConfig, setShowConfig] = useState(true);
   const [showMetrics, setShowMetrics] = useState(true);
-  const [showCarList, setShowCarList] = useState(false);
+  const [showCarList, setShowCarList] = useState(true); // Show car list by default
 
   // Configuration states
   const [borderConfig, setBorderConfig] = useState<BorderCrossingConfig>({
     num_queues: 2,
     nodes_per_queue: [1, 1],
-    arrival_rate: 10.0,
-    service_rates: [3.0, 3.0],
+    arrival_rate: 6.0, // 6 cars per minute arriving
+    service_rates: [0.25, 0.25], // ~4 minutes per car (0.25 cars/min = 1 car per 4 min)
     queue_assignment: 'shortest',
     safe_distance: 10.0,
     max_queue_length: 50,
@@ -64,23 +64,44 @@ const FullscreenDashboard: React.FC = () => {
 
   const [simulationConfig, setSimulationConfig] = useState<SimulationConfig>({
     max_simulation_time: 1800.0,
-    time_factor: 10.0,
+    time_factor: 1.0,  // Real-time by default
     enable_telemetry: true,
     enable_position_tracking: true,
   });
 
   const [isRunning, setIsRunning] = useState(false);
 
-  // Load GeoJSON boundary data
+  // Service time range (in minutes)
+  const [serviceTimeMin, setServiceTimeMin] = useState(3);
+  const [serviceTimeMax, setServiceTimeMax] = useState(6);
+
+  // Border crossing selection
+  const [availableCrossings, setAvailableCrossings] = useState<BorderCrossing[]>([]);
+  const [selectedCrossing, setSelectedCrossing] = useState<string>('bota-usa2mx');
+
+  // Load available border crossings
   useEffect(() => {
-    fetch(`${API_BASE_URL}/geojson/usa2mx/bota`)
-      .then((res) => res.json())
+    api.getBorderCrossings()
       .then((data) => {
-        console.log('GeoJSON loaded:', data);
-        setGeojsonData(data);
+        setAvailableCrossings(data.crossings);
+        console.log('Available crossings:', data.crossings);
       })
-      .catch((err) => console.error('Failed to load GeoJSON:', err));
+      .catch((err) => console.error('Failed to load border crossings:', err));
   }, []);
+
+  // Load GeoJSON for selected crossing
+  useEffect(() => {
+    const crossing = availableCrossings.find(c => `${c.id}-${c.direction}` === selectedCrossing);
+    if (crossing) {
+      fetch(`${API_BASE_URL}/geojson/${crossing.direction}/${crossing.id}`)
+        .then((res) => res.json())
+        .then((data) => {
+          console.log('GeoJSON loaded for', crossing.name, ':', data);
+          setGeojsonData(data);
+        })
+        .catch((err) => console.error('Failed to load GeoJSON:', err));
+    }
+  }, [selectedCrossing, availableCrossings]);
 
   // WebSocket connection
   useEffect(() => {
@@ -97,7 +118,16 @@ const FullscreenDashboard: React.FC = () => {
       try {
         const message: SimulationUpdate = JSON.parse(event.data);
         if (message.type === 'simulation_update') {
-          console.log('Simulation update:', message.data);
+          console.log('=== Simulation Update ===');
+          console.log('Cars count:', message.data.cars.length);
+          if (message.data.cars.length > 0) {
+            console.log('First car:', message.data.cars[0]);
+            console.log('First car position:', message.data.cars[0].position);
+            console.log('Position is array?', Array.isArray(message.data.cars[0].position));
+            console.log('Position[0] (lon):', message.data.cars[0].position[0]);
+            console.log('Position[1] (lat):', message.data.cars[0].position[1]);
+          }
+          console.log('Metrics:', message.data.metrics);
           setSimulationData(message.data);
         }
       } catch (error) {
@@ -123,8 +153,32 @@ const FullscreenDashboard: React.FC = () => {
 
   const handleStartSimulation = async () => {
     try {
+      // Generate service rates with random variation per node
+      const generateServiceRates = (numNodes: number) => {
+        return Array.from({ length: numNodes }, () => {
+          // Random service time between min and max
+          const range = serviceTimeMax - serviceTimeMin;
+          const serviceTimeMinutes = serviceTimeMin + Math.random() * range;
+          // Convert to rate (cars per minute)
+          return 1 / serviceTimeMinutes;
+        });
+      };
+
+      const totalNodes = borderConfig.nodes_per_queue.reduce((sum, n) => sum + n, 0);
+      const serviceRatesWithVariation = generateServiceRates(totalNodes);
+
+      console.log('Generated service rates (cars/min):', serviceRatesWithVariation);
+      console.log('Service times (min/car):', serviceRatesWithVariation.map(r => (1/r).toFixed(2)));
+
+      // Get selected crossing path
+      const crossing = availableCrossings.find(c => `${c.id}-${c.direction}` === selectedCrossing);
+      const geojsonPath = crossing?.path || 'cascabel/paths/usa2mx/bota.geojson';
+
       const response = await api.startSimulation({
-        border_config: borderConfig,
+        border_config: {
+          ...borderConfig,
+          service_rates: serviceRatesWithVariation, // Use randomized rates
+        },
         simulation_config: simulationConfig,
         phone_config: {
           sampling_rate: 10.0,
@@ -133,6 +187,7 @@ const FullscreenDashboard: React.FC = () => {
           gyro_noise: 0.01,
           device_orientation: 'portrait',
         },
+        geojson_path: geojsonPath,
       });
       setSimulationId(response.simulation_id);
       console.log('Simulation started:', response.simulation_id);
@@ -197,30 +252,52 @@ const FullscreenDashboard: React.FC = () => {
           </>
         )}
 
+        {/* Test Marker - should always show in center of border path */}
+        <Marker
+          longitude={-106.4519}
+          latitude={31.7641}
+          anchor="center"
+        >
+          <div
+            style={{
+              width: '30px',
+              height: '30px',
+              borderRadius: '50%',
+              backgroundColor: '#ff00ff',
+              border: '4px solid #ffffff',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.8)',
+            }}
+            title="Test Marker - Center"
+          />
+        </Marker>
+
         {/* Car Markers */}
-        {simulationData?.cars.map((car) => (
-          <Marker
-            key={car.id}
-            longitude={car.position[0]}
-            latitude={car.position[1]}
-            anchor="center"
-            onClick={() => setSelectedCarId(car.id)}
-          >
-            <div
-              style={{
-                width: selectedCarId === car.id ? '20px' : '14px',
-                height: selectedCarId === car.id ? '20px' : '14px',
-                borderRadius: '50%',
-                backgroundColor: getCarColor(car.status),
-                border: selectedCarId === car.id ? '3px solid #ffffff' : '2px solid #ffffff',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-              title={`Car ${car.id} - ${car.status}`}
-            />
-          </Marker>
-        ))}
+        {simulationData?.cars.map((car) => {
+          console.log(`Rendering marker for car ${car.id} at [${car.position[0]}, ${car.position[1]}]`);
+          return (
+            <Marker
+              key={car.id}
+              longitude={car.position[0]}
+              latitude={car.position[1]}
+              anchor="center"
+              onClick={() => setSelectedCarId(car.id)}
+            >
+              <div
+                style={{
+                  width: selectedCarId === car.id ? '20px' : '14px',
+                  height: selectedCarId === car.id ? '20px' : '14px',
+                  borderRadius: '50%',
+                  backgroundColor: getCarColor(car.status),
+                  border: selectedCarId === car.id ? '3px solid #ffffff' : '2px solid #ffffff',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                }}
+                title={`Car ${car.id} - ${car.status}`}
+              />
+            </Marker>
+          );
+        })}
 
         <NavigationControl position="top-right" />
       </Map>
@@ -280,12 +357,43 @@ const FullscreenDashboard: React.FC = () => {
               </Tag>
             )}
 
+            <FormGroup label="Border Crossing" style={{ marginBottom: '10px' }}>
+              <HTMLSelect
+                value={selectedCrossing}
+                onChange={(e) => setSelectedCrossing(e.currentTarget.value)}
+                disabled={isRunning || availableCrossings.length === 0}
+                style={{ width: '100%' }}
+              >
+                {availableCrossings.length === 0 ? (
+                  <option>Loading...</option>
+                ) : (
+                  availableCrossings
+                    .filter((c) => c.geometry_type === 'LineString')
+                    .map((crossing) => (
+                      <option key={`${crossing.id}-${crossing.direction}`} value={`${crossing.id}-${crossing.direction}`}>
+                        {crossing.name} ({crossing.direction.toUpperCase()})
+                      </option>
+                    ))
+                )}
+              </HTMLSelect>
+            </FormGroup>
+
             <FormGroup label="Queues" inline>
               <NumericInput
                 value={borderConfig.num_queues}
-                onValueChange={(val) =>
-                  setBorderConfig({ ...borderConfig, num_queues: val })
-                }
+                onValueChange={(val) => {
+                  // Update nodes_per_queue and service_rates arrays to match
+                  const newNodesPerQueue = Array(val).fill(1);
+                  const totalNodes = val; // 1 node per queue
+                  const newServiceRates = Array(totalNodes).fill(0.25); // 4 min per car
+
+                  setBorderConfig({
+                    ...borderConfig,
+                    num_queues: val,
+                    nodes_per_queue: newNodesPerQueue,
+                    service_rates: newServiceRates,
+                  });
+                }}
                 min={1}
                 max={5}
                 style={{ width: '80px' }}
@@ -305,6 +413,32 @@ const FullscreenDashboard: React.FC = () => {
                 style={{ width: '80px' }}
                 disabled={isRunning}
               />
+            </FormGroup>
+
+            <FormGroup label="Service Time Range (min)" inline>
+              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                <NumericInput
+                  value={serviceTimeMin}
+                  onValueChange={(val) => setServiceTimeMin(Math.min(val, serviceTimeMax - 0.5))}
+                  min={1}
+                  max={15}
+                  stepSize={0.5}
+                  style={{ width: '60px' }}
+                  disabled={isRunning}
+                  placeholder="Min"
+                />
+                <span>-</span>
+                <NumericInput
+                  value={serviceTimeMax}
+                  onValueChange={(val) => setServiceTimeMax(Math.max(val, serviceTimeMin + 0.5))}
+                  min={1}
+                  max={15}
+                  stepSize={0.5}
+                  style={{ width: '60px' }}
+                  disabled={isRunning}
+                  placeholder="Max"
+                />
+              </div>
             </FormGroup>
 
             <FormGroup label="Time Factor (speed)" inline>
@@ -338,6 +472,10 @@ const FullscreenDashboard: React.FC = () => {
                 <option value="round_robin">Round Robin</option>
               </HTMLSelect>
             </FormGroup>
+
+            <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#f5f8fa', borderRadius: '4px', fontSize: '11px', color: '#5c7080' }}>
+              <strong>ℹ️ Info:</strong> Each service booth gets a random service time between {serviceTimeMin}-{serviceTimeMax} minutes per car.
+            </div>
           </Collapse>
         </Card>
       </div>

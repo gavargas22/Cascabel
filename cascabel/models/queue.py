@@ -49,9 +49,14 @@ class CarQueue:
         self.serving_car = None  # Car currently being served
         self.service_nodes = []  # Service nodes assigned to this queue
 
-    def add_car(self, sampling_rate=10, phone_config=None):
+    def add_car(self, car_id=None, sampling_rate=10, phone_config=None):
         """
         Add a new car to the queue.
+
+        Args:
+            car_id: Unique ID for the car (if None, uses internal counter)
+            sampling_rate: Telemetry sampling rate
+            phone_config: Phone configuration for telemetry
 
         Returns:
             Car: The newly created car object
@@ -60,11 +65,19 @@ class CarQueue:
         if len(self.cars) >= max_length:
             return None  # Queue full
 
-        car_id = self.next_car_id
-        self.next_car_id += 1
+        # Use provided car_id or generate one
+        if car_id is None:
+            car_id = self.next_car_id
+            self.next_car_id += 1
 
-        # Create car at queue entrance
-        car = Car(car_id, sampling_rate, phone_config, initial_position=0.0)
+        # Create car at the START of the linestring (far from booth)
+        # Position 0 = north end of linestring (start)
+        # Position max = south end of linestring (booth)
+        # They will travel toward position max (increasing position toward booth)
+        initial_position = 0.0  # Start at beginning of linestring (north)
+        car = Car(car_id, sampling_rate, phone_config, initial_position=initial_position)
+        car.status = "approaching"  # Start in approaching state
+        car.velocity = 0.0  # Start from stationary, will accelerate to approach speed
         self.cars[car_id] = car
 
         # Initialize telemetry generator if phone config provided
@@ -106,6 +119,52 @@ class CarQueue:
             if self.serving_car and self.serving_car.car_id == car_id:
                 self.serving_car = None
 
+    def get_control_point_speed_limit(self, position, traffic_control_points, default_speed):
+        """
+        Calculate speed limit at a given position based on traffic control points.
+
+        Args:
+            position: Current position along the linestring (meters)
+            traffic_control_points: List of control point definitions
+            default_speed: Speed to use if no control points apply
+
+        Returns:
+            float: Target speed in m/s
+        """
+        if not traffic_control_points:
+            return default_speed
+
+        # Check each control point
+        for cp in traffic_control_points:
+            cp_position = cp.get('position_meters', 0)
+
+            if cp['type'] == 'sensor_array':
+                # Sensor arrays slow down traffic in a zone
+                slowdown_start = cp_position - cp.get('slowdown_distance_meters', 30)
+                slowdown_end = cp_position + cp.get('slowdown_distance_meters', 30)
+
+                if slowdown_start <= position <= slowdown_end:
+                    # Inside slowdown zone - use target speed
+                    target_speed = cp.get('target_speed_mps', 2.24)  # default 5 mph
+                    return target_speed
+                elif position < slowdown_start and (slowdown_start - position) < 20:
+                    # Approaching slowdown zone - start reducing speed
+                    distance_to_zone = slowdown_start - position
+                    # Linear interpolation from default_speed to target_speed
+                    target_speed = cp.get('target_speed_mps', 2.24)
+                    blend = distance_to_zone / 20.0
+                    return target_speed + (default_speed - target_speed) * blend
+
+            elif cp['type'] == 'booth':
+                # Booths cause complete stops - handled separately in queue logic
+                # Just check if we're approaching the booth
+                stop_distance = cp.get('stop_distance_meters', 40)
+                if position >= (cp_position - stop_distance):
+                    # Very close to booth - should be in queue already
+                    return 0.0
+
+        return default_speed
+
     def update_positions(self, dt):
         """
         Update positions of all cars in queue based on queue dynamics.
@@ -116,60 +175,125 @@ class CarQueue:
         if not self.car_positions:
             return
 
-        # Sort cars by position (front of queue first)
+        # Sort cars by position (front of queue first - HIGHEST position number)
+        # Position increases as cars approach the booth (toward waitline_length)
         sorted_cars = sorted(self.cars.values(), key=lambda c: c.position, reverse=True)
+
+        booth_position = self.waitline.waitline_length if self.waitline else 1000.0
+
+        # Get traffic control points from waitline
+        traffic_control_points = self.waitline.traffic_control_points if self.waitline else []
 
         # Update each car's target velocity based on position in queue
         for i, car in enumerate(sorted_cars):
-            if i == 0 and self.serving_car == car:
-                # First car being served - can move at service speed
-                target_velocity = 5.0  # m/s, constant service speed
+            # Assign each car a preferred speed with variance (27-33 mph range)
+            if not hasattr(car, 'preferred_speed'):
+                speed_variance = np.random.uniform(0.9, 1.1)
+                car.preferred_speed = car.max_velocity * speed_variance
+
+            # Handle approaching cars (moving toward booth)
+            if car.status == "approaching":
+                # Check if car has reached the queue (close to booth)
+                if car.position >= (booth_position - self.safe_distance):
+                    # Transition to queued
+                    car.status = "queued"
+                    current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+                    car.set_status("queued", current_time)
+                    target_velocity = 0.0  # Stop at queue
+                else:
+                    # Check distance to booth and car ahead
+                    distance_to_booth = booth_position - car.position
+
+                    # Apply traffic control point speed limits
+                    control_speed_limit = self.get_control_point_speed_limit(
+                        car.position, traffic_control_points, car.preferred_speed
+                    )
+
+                    # Check if there's a car ahead (car in front has higher position, which is at lower index)
+                    if i > 0:
+                        front_car = sorted_cars[i - 1]  # Car ahead (higher position)
+                        distance_to_front = front_car.position - car.position - front_car.length
+
+                        # Car-following behavior with control point limits
+                        if distance_to_front < self.safe_distance * 2:
+                            # Getting close - slow down to match or below front car
+                            target_velocity = min(front_car.velocity, control_speed_limit * 0.7)
+                        elif distance_to_front < self.safe_distance * 3:
+                            # Moderate distance - match front car speed but respect control points
+                            target_velocity = min(control_speed_limit, front_car.velocity)
+                        else:
+                            # Safe distance - use control point speed limit or slow down near booth
+                            if distance_to_booth < 50:
+                                target_velocity = max(car.queue_velocity, control_speed_limit * (distance_to_booth / 50))
+                            else:
+                                target_velocity = control_speed_limit
+                    else:
+                        # No car ahead (first car approaching), use control point limits and slow near booth
+                        if distance_to_booth < 50:  # Start slowing 50m from booth
+                            # Gradual deceleration
+                            target_velocity = max(car.queue_velocity, control_speed_limit * (distance_to_booth / 50))
+                        else:
+                            target_velocity = control_speed_limit
+
+                # Use physics to update (gradual acceleration/deceleration)
+                car.update_physics(target_velocity, dt)
+
+            elif i == 0 and self.serving_car == car:
+                # First car being served - stationary at booth
+                target_velocity = 0.0
+                car.position = booth_position  # Keep at booth
             elif i == 0:
-                # First car waiting to be served
+                # First car in queue waiting to be served - stationary
                 target_velocity = 0.0
             else:
-                # Following cars maintain safe distance
+                # Following cars in queue - move slowly toward car ahead
                 front_car = sorted_cars[i - 1]
                 distance_to_front = front_car.position - car.position - front_car.length
 
-                if distance_to_front > self.safe_distance:
-                    # Can speed up
-                    target_velocity = min(car.max_velocity, front_car.velocity * 1.1)
-                elif distance_to_front < self.safe_distance * 0.8:
-                    # Too close, slow down
-                    target_velocity = max(0, front_car.velocity * 0.9)
+                # Queue movement behavior - slow crawl forward
+                if distance_to_front > self.safe_distance * 1.5:
+                    # Gap too large - move forward at queue speed (3 mph)
+                    target_velocity = car.queue_velocity
+                elif distance_to_front > self.safe_distance:
+                    # Normal queue spacing - creep forward slowly
+                    target_velocity = car.queue_velocity * 0.5
+                elif distance_to_front > self.safe_distance * 0.5:
+                    # Getting close - very slow creep
+                    target_velocity = car.queue_velocity * 0.3
                 else:
-                    # Maintain speed
-                    target_velocity = front_car.velocity
+                    # Too close - stop
+                    target_velocity = 0.0
 
-            # Update car physics
-            car.update_physics(target_velocity, dt)
+            # Update car physics (except for approaching cars handled above)
+            if car.status != "approaching":
+                car.update_physics(target_velocity, dt)
 
     def start_service(self):
         """
         Start serving the next car in queue.
         """
-        if not self.serving_car and self.car_positions:
-            # Get first car in queue
-            first_car_id = self.car_positions[0]
-            first_car = self.cars[first_car_id]
+        if not self.serving_car and self.cars:
+            # Get car with highest position (closest to booth = front of queue)
+            sorted_cars = sorted(self.cars.values(), key=lambda c: c.position, reverse=True)
+            if sorted_cars and sorted_cars[0].status == "queued":
+                first_car = sorted_cars[0]
 
-            # Start service
-            current_time = self.mm1_queue.current_time if self.mm1_queue else 0
-            first_car.set_status("serving", current_time)
-            self.serving_car = first_car
+                # Start service
+                current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+                first_car.set_status("serving", current_time)
+                self.serving_car = first_car
 
-            # Generate service time and set completion time
-            if self.mm1_queue:
-                service_time_minutes = (
-                    self.mm1_queue.service_process.generate_service_time()
-                )
-                self.service_completion_time = (
-                    self.mm1_queue.current_time + service_time_minutes * 60
-                )
+                # Generate service time and set completion time
+                if self.mm1_queue:
+                    service_time_minutes = (
+                        self.mm1_queue.service_process.generate_service_time()
+                    )
+                    self.service_completion_time = (
+                        self.mm1_queue.current_time + service_time_minutes * 60
+                    )
 
-                # Record service start
-                self.mm1_queue.service_start_times.append(self.mm1_queue.current_time)
+                    # Record service start
+                    self.mm1_queue.service_start_times.append(self.mm1_queue.current_time)
 
     def advance_time(self, dt):
         """
