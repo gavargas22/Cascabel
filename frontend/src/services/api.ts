@@ -27,10 +27,19 @@ export interface PhoneConfig {
   device_orientation: 'portrait' | 'landscape';
 }
 
+export interface PhysicsConfig {
+  min_speed_mps: number;  // Minimum speed (slowest car)
+  max_speed_mps: number;  // Maximum speed (fastest car)
+  safe_distance_meters: number;  // Distance between cars
+  max_acceleration: number;  // m/s² - higher = more aggressive
+  max_deceleration: number;  // m/s² - higher absolute = harder braking
+}
+
 export interface SimulationRequest {
   border_config: BorderCrossingConfig;
   simulation_config?: SimulationConfig;
   phone_config?: PhoneConfig;
+  physics_config?: PhysicsConfig;
   geojson_path?: string;
 }
 

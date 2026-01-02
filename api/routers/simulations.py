@@ -22,9 +22,19 @@ from cascabel.models.models import BorderCrossingConfig, SimulationConfig, Phone
 from cascabel.simulation.csv_generator import CSVGenerator
 from cascabel.utils.geojson_loader import GeoJSONLoader
 from cascabel.utils.bounding_validator import constrain_point_to_bounds
+from cascabel.database import TelemetryDatabase
 from ..shared import simulations, websockets
 
 router = APIRouter()
+
+
+class PhysicsConfig(BaseModel):
+    """Physics simulation parameters."""
+    min_speed_mps: float = 12.1  # 27 mph
+    max_speed_mps: float = 14.7  # 33 mph
+    safe_distance_meters: float = 3.0
+    max_acceleration: float = 0.75
+    max_deceleration: float = 1.25
 
 
 class SimulationRequest(BaseModel):
@@ -33,6 +43,7 @@ class SimulationRequest(BaseModel):
     border_config: BorderCrossingConfig
     simulation_config: Optional[SimulationConfig] = None
     phone_config: Optional[PhoneConfig] = None
+    physics_config: Optional[PhysicsConfig] = None
     geojson_path: str = "cascabel/paths/usa2mx/bota.geojson"
 
 
@@ -144,10 +155,16 @@ async def run_simulation(simulation_id: str):
                 wait_times = [
                     car.service_start_time - car.arrival_time
                     for car in completed_cars
-                    if car.service_start_time and car.arrival_time
+                    if car.service_start_time and car.arrival_time and car.service_start_time >= car.arrival_time
                 ]
                 if wait_times:
                     avg_wait_time = sum(wait_times) / len(wait_times)
+                    # Debug: Log if we have unusual wait times
+                    if avg_wait_time < 0:
+                        print(f"WARNING: Negative average wait time: {avg_wait_time}")
+                        for car in completed_cars[:5]:  # Check first few cars
+                            if car.service_start_time and car.arrival_time:
+                                print(f"  Car {car.car_id}: arrival={car.arrival_time:.2f}, service_start={car.service_start_time:.2f}, wait={car.service_start_time - car.arrival_time:.2f}")
 
             # Get traffic control points from waitline
             traffic_control_points = []
@@ -165,6 +182,7 @@ async def run_simulation(simulation_id: str):
                         "total_arrivals": int(simulation.border_crossing.total_arrivals),
                         "total_completions": int(simulation.border_crossing.total_completions),
                         "average_wait_time": float(avg_wait_time) if avg_wait_time is not None else None,
+                        "simulation_time": float(simulation.temporal_state.get('simulation_time', 0)),
                     },
                     "traffic_control_points": traffic_control_points,
                 },
@@ -255,13 +273,22 @@ async def start_simulation(
             request.geojson_path, {"slow": 0.8, "fast": 0.2}, line_length_seed=1.0
         )
 
+        # Apply physics config to border config if provided
+        border_cfg = request.border_config
+        if request.physics_config:
+            border_cfg.safe_distance = request.physics_config.safe_distance_meters
+
         # Create simulation with provided configs
         simulation = Simulation(
             waitline=waitline,
-            border_config=request.border_config,
+            border_config=border_cfg,
             simulation_config=request.simulation_config,
             phone_config=request.phone_config,
         )
+
+        # Store physics config for use during simulation
+        if request.physics_config:
+            simulation.physics_config = request.physics_config
 
         # Store simulation state
         simulations[simulation_id] = {
@@ -288,6 +315,109 @@ async def start_simulation(
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"Failed to start simulation: {str(e)}"
+        )
+
+
+@router.post("/{simulation_id}/stop", response_model=Dict[str, str])
+async def stop_simulation(simulation_id: str):
+    """
+    Stop a running simulation and save telemetry data to database.
+
+    Args:
+        simulation_id: ID of the simulation to stop
+
+    Returns:
+        Status message with database save information
+    """
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim = simulations[simulation_id]
+
+    # Mark simulation as stopped
+    sim["status"] = "stopped"
+    sim["end_time"] = datetime.now()
+
+    try:
+        # Collect telemetry data from all cars
+        simulation = sim["simulation"]
+        db = TelemetryDatabase()
+
+        # Save simulation metadata
+        avg_wait_time = simulation.border_crossing.get_average_wait_time()
+        db.save_simulation_metadata(
+            simulation_id=simulation_id,
+            start_time=sim["start_time"].timestamp(),
+            end_time=sim["end_time"].timestamp(),
+            total_cars=len(simulation.border_crossing.all_cars),
+            total_arrivals=simulation.border_crossing.total_arrivals,
+            total_completions=simulation.border_crossing.total_completions,
+            average_wait_time=avg_wait_time if avg_wait_time and avg_wait_time > 0 else None,
+            border_crossing=sim["request"].geojson_path.split("/")[-1].replace(".geojson", ""),
+            geojson_path=sim["request"].geojson_path,
+        )
+
+        # Collect all telemetry records from all cars
+        telemetry_records = []
+        for car in simulation.border_crossing.all_cars:
+            if hasattr(car, "telemetry_records") and car.telemetry_records:
+                for record in car.telemetry_records:
+                    # Calculate wait time if car has completed service
+                    wait_time = None
+                    if car.service_start_time and car.arrival_time:
+                        wait_time = car.service_start_time - car.arrival_time
+
+                    telemetry_records.append(
+                        {
+                            "simulation_id": simulation_id,
+                            "car_id": car.car_id,
+                            "timestamp": record.get("timestamp", 0),
+                            "latitude": record["gps"]["latitude"],
+                            "longitude": record["gps"]["longitude"],
+                            "altitude": record["gps"].get("altitude"),
+                            "gps_accuracy": record["gps"].get("accuracy"),
+                            "speed": record["gps"].get("speed", 0),
+                            "heading": record["gps"].get("heading", 0),
+                            "acceleration_x": record["accelerometer"]["x"],
+                            "acceleration_y": record["accelerometer"]["y"],
+                            "acceleration_z": record["accelerometer"]["z"],
+                            "car_status": car.status,
+                            "queue_id": car.queue_id,
+                            "position_on_path": car.position,
+                            "arrival_time": car.arrival_time,
+                            "service_start_time": car.service_start_time,
+                            "completion_time": car.completion_time,
+                            "wait_time": wait_time,
+                        }
+                    )
+
+        # Save telemetry data in batch
+        if telemetry_records:
+            db.save_telemetry_batch(telemetry_records)
+
+        db.close()
+
+        # Close any open websockets
+        if simulation_id in websockets:
+            for ws in websockets[simulation_id]:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+            del websockets[simulation_id]
+
+        return {
+            "simulation_id": simulation_id,
+            "status": "stopped",
+            "message": f"Simulation stopped. Saved {len(telemetry_records)} telemetry records to database.",
+            "telemetry_records_saved": len(telemetry_records),
+            "database_path": db.db_path,
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to stop simulation and save data: {str(e)}",
         )
 
 

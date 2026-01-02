@@ -58,8 +58,14 @@ class TelemetryGenerator:
         # Generate GPS data
         gps_data = self.gps_gen.generate_position_at_time(car, timestamp)
 
-        # Generate accelerometer data
-        car_acceleration = [car.acceleration, 0.0, 0.0]  # [forward, lateral, vertical]
+        # Generate accelerometer data with gravity
+        # Car acceleration in vehicle frame: [forward, lateral, vertical]
+        # Vertical includes gravity (9.81 m/s²) when stationary/level
+        car_acceleration = [
+            float(car.acceleration),  # Forward acceleration
+            0.0,  # Lateral (no turning for now)
+            -9.81  # Vertical (gravity pointing down)
+        ]
         accel_data = self.accel_gen.generate_acceleration(
             car_acceleration, self.device_orientation
         )

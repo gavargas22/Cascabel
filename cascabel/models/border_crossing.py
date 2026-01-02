@@ -306,15 +306,8 @@ class BorderCrossing:
                     # Store in history for metrics calculation
                     self.completed_cars.append(completed_car)
 
-                    # Remove the completed car from its queue
-                    for queue in self.queues:
-                        if completed_car.car_id in queue.cars:
-                            # Remove from cars dict
-                            del queue.cars[completed_car.car_id]
-                            # Remove from position tracking
-                            if completed_car.car_id in queue.car_positions:
-                                queue.car_positions.remove(completed_car.car_id)
-                            break
+                    # Don't remove immediately - let car drive past booth
+                    # Car will be removed when it reaches removal distance past booth
 
         return completed_cars
 
@@ -325,7 +318,7 @@ class BorderCrossing:
         Args:
             queue: CarQueue to process
         """
-        if not queue.car_positions:
+        if not queue.cars:
             return
 
         # Find available service nodes for this queue
@@ -334,9 +327,14 @@ class BorderCrossing:
         if not available_nodes:
             return  # No available nodes
 
-        # Get first car in queue
-        first_car_id = queue.car_positions[0]
-        first_car = queue.cars[first_car_id]
+        # Get car with highest position (front of queue) that is queued
+        sorted_cars = sorted(queue.cars.values(), key=lambda c: c.position, reverse=True)
+        queued_cars = [c for c in sorted_cars if c.status == "queued"]
+
+        if not queued_cars:
+            return  # No cars ready for service
+
+        first_car = queued_cars[0]
 
         # Try to assign to an available node
         for node in available_nodes:
