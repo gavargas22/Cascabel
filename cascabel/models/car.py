@@ -48,6 +48,20 @@ class Car:
         self.arrival_time = None
         self.service_start_time = None
         self.completion_time = None
+        self.exit_time = None  # When car exits the system (removed from simulation)
+
+        # Journey statistics
+        self.total_distance = 0.0  # Total distance traveled (meters)
+        self.max_speed_reached = 0.0  # Maximum speed during journey (m/s)
+        self.avg_speed = 0.0  # Average speed during journey (m/s)
+        self.time_in_queue = 0.0  # Time spent in queued status (seconds)
+        self.time_being_served = 0.0  # Time spent in serving status (seconds)
+        self.time_approaching = 0.0  # Time spent in approaching status (seconds)
+
+        # Speed samples for calculating average
+        self._speed_samples = []
+        self._last_position = initial_position
+        self._last_update_time = None
 
         # Telemetry data storage
         self.telemetry_records = []
@@ -103,6 +117,38 @@ class Car:
             completion_time=self.completion_time,
         )
 
+    def update_statistics(self, current_time, dt):
+        """
+        Update journey statistics.
+
+        Args:
+            current_time: Current simulation time (seconds)
+            dt: Time delta (seconds)
+        """
+        # Track time in each status
+        if self.status == "approaching":
+            self.time_approaching += dt
+        elif self.status == "queued":
+            self.time_in_queue += dt
+        elif self.status == "serving":
+            self.time_being_served += dt
+
+        # Track distance
+        if self._last_position is not None:
+            distance_delta = abs(self.position - self._last_position)
+            self.total_distance += distance_delta
+        self._last_position = self.position
+
+        # Track speed
+        self.max_speed_reached = max(self.max_speed_reached, abs(self.velocity))
+        self._speed_samples.append(abs(self.velocity))
+
+        # Calculate average speed
+        if self._speed_samples:
+            self.avg_speed = sum(self._speed_samples) / len(self._speed_samples)
+
+        self._last_update_time = current_time
+
     def update_physics(self, target_velocity, dt):
         """
         Update car physics based on target velocity and time step.
@@ -153,11 +199,14 @@ class Car:
     def set_status(self, status, timestamp=None):
         """Update car status with timestamp"""
         self.status = status
-        if status == "queued" and not self.arrival_time:
+        # Set arrival_time when car first enters the system (approaching or queued)
+        if status in ["approaching", "queued"] and not self.arrival_time:
             self.arrival_time = timestamp or datetime.now().timestamp()
-        elif status == "serving" and not self.service_start_time:
+        # Set service_start_time when service begins
+        if status == "serving" and not self.service_start_time:
             self.service_start_time = timestamp or datetime.now().timestamp()
-        elif status == "completed" and not self.completion_time:
+        # Set completion_time when service completes
+        if status == "completed" and not self.completion_time:
             self.completion_time = timestamp or datetime.now().timestamp()
 
     def get_waiting_time(self):
@@ -171,6 +220,45 @@ class Car:
         if self.completion_time and self.service_start_time:
             return self.completion_time - self.service_start_time
         return 0.0
+
+    def get_total_journey_time(self):
+        """Calculate total journey time from arrival to exit"""
+        if self.exit_time and self.arrival_time:
+            return self.exit_time - self.arrival_time
+        elif self.completion_time and self.arrival_time:
+            return self.completion_time - self.arrival_time
+        return 0.0
+
+    def get_comprehensive_stats(self):
+        """Get comprehensive statistics for this car's journey"""
+        return {
+            "car_id": self.car_id,
+            "status": self.status,
+            "queue_id": self.queue_id,
+
+            # Timing
+            "arrival_time": self.arrival_time,
+            "service_start_time": self.service_start_time,
+            "completion_time": self.completion_time,
+            "exit_time": self.exit_time,
+            "wait_time": self.get_waiting_time(),
+            "service_time": self.get_service_time(),
+            "total_journey_time": self.get_total_journey_time(),
+
+            # Time in each status
+            "time_approaching": self.time_approaching,
+            "time_in_queue": self.time_in_queue,
+            "time_being_served": self.time_being_served,
+
+            # Distance and speed
+            "total_distance": self.total_distance,
+            "max_speed": self.max_speed_reached,
+            "avg_speed": self.avg_speed,
+            "final_position": self.position,
+
+            # Telemetry
+            "telemetry_records_count": len(self.telemetry_records) if self.telemetry_records else 0,
+        }
 
     def __repr__(self):
         return (

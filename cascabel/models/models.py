@@ -45,15 +45,26 @@ class BorderCrossingConfig(BaseModel):
     @validator('nodes_per_queue')
     def validate_nodes_per_queue(cls, v, values):
         if 'num_queues' in values and len(v) != values['num_queues']:
-            raise ValueError('nodes_per_queue length must match num_queues')
+            # Auto-pad or trim to match num_queues
+            num_queues = values['num_queues']
+            if len(v) < num_queues:
+                # Pad with 1 node per queue
+                v = v + [1] * (num_queues - len(v))
+            elif len(v) > num_queues:
+                # Trim excess
+                v = v[:num_queues]
         return v
 
     @validator('service_rates')
     def validate_service_rates(cls, v, values):
         if 'nodes_per_queue' in values:
             expected_length = sum(values['nodes_per_queue'])
-            if len(v) != expected_length:
-                raise ValueError(f'service_rates length must match total nodes ({expected_length})')
+            if len(v) < expected_length:
+                # Pad with default rate of 3.0 cars/minute
+                v = v + [3.0] * (expected_length - len(v))
+            elif len(v) > expected_length:
+                # Trim excess
+                v = v[:expected_length]
         return v
 
 

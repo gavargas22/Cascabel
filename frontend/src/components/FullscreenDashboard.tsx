@@ -47,6 +47,15 @@ interface SimulationUpdate {
       stop_distance_meters?: number;
       queue_start_meters?: number;
     }>;
+    service_nodes?: Array<{
+      node_id: string;
+      queue_id: number;
+      is_busy: boolean;
+      current_car_id?: number;
+      service_rate: number;
+      total_served: number;
+      total_service_time: number;
+    }>;
   };
 }
 
@@ -85,6 +94,7 @@ const FullscreenDashboard: React.FC = () => {
   const [showConfig, setShowConfig] = useState(true);
   const [showMetrics, setShowMetrics] = useState(true);
   const [showCarList, setShowCarList] = useState(true); // Show car list by default
+  const [showServiceNodes, setShowServiceNodes] = useState(false);
 
   // Configuration states
   const [borderConfig, setBorderConfig] = useState<BorderCrossingConfig>({
@@ -172,6 +182,9 @@ const FullscreenDashboard: React.FC = () => {
             console.log('Position[1] (lat):', message.data.cars[0].position[1]);
           }
           console.log('Metrics:', message.data.metrics);
+          if (message.data.metrics.average_wait_time !== null && message.data.metrics.average_wait_time !== undefined) {
+            console.log('*** AVERAGE WAIT TIME:', message.data.metrics.average_wait_time, 'seconds');
+          }
           setSimulationData(message.data);
         }
       } catch (error) {
@@ -246,7 +259,7 @@ const FullscreenDashboard: React.FC = () => {
     if (simulationId && ws) {
       try {
         // Call the stop endpoint to kill the simulation and save data
-        const response = await fetch(`${API_BASE_URL}/api/simulations/${simulationId}/stop`, {
+        const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/stop`, {
           method: 'POST',
         });
 
@@ -441,7 +454,7 @@ const FullscreenDashboard: React.FC = () => {
                   });
                 }}
                 min={1}
-                max={5}
+                max={20}
                 style={{ width: '80px' }}
                 disabled={isRunning}
               />
@@ -617,6 +630,93 @@ const FullscreenDashboard: React.FC = () => {
             </div>
           </Collapse>
         </Card>
+
+        {/* Service Node Management */}
+        {isRunning && simulationData && (
+          <Card style={{ marginTop: '10px', backgroundColor: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
+            <div
+              style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              onClick={() => setShowServiceNodes(!showServiceNodes)}
+            >
+              <h3 style={{ margin: 0 }}>⚙️ Service Rates</h3>
+              <span style={{ fontSize: '20px' }}>{showServiceNodes ? '▲' : '▼'}</span>
+            </div>
+
+            <Collapse isOpen={showServiceNodes}>
+              <div style={{ marginTop: '10px', maxHeight: '350px', overflowY: 'auto' }}>
+                {Array.from({ length: borderConfig.num_queues }).map((_, queueIdx) => {
+                  const queueNodes = simulationData.service_nodes?.filter(
+                    (n: any) => n.queue_id === queueIdx
+                  ) || [];
+
+                  return (
+                    <div key={queueIdx} style={{ marginBottom: '12px', padding: '8px', backgroundColor: '#f5f8fa', borderRadius: '3px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '6px', color: '#5c7080' }}>
+                        Queue {queueIdx} ({queueNodes.length} node{queueNodes.length !== 1 ? 's' : ''})
+                      </div>
+
+                      {queueNodes.length === 0 ? (
+                        <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic' }}>No nodes</div>
+                      ) : (
+                        queueNodes.map((node: any) => (
+                          <div
+                            key={node.node_id}
+                            style={{
+                              padding: '6px',
+                              marginBottom: '4px',
+                              backgroundColor: '#ffffff',
+                              border: '1px solid #e0e0e0',
+                              borderRadius: '3px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '8px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: '60px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '500', color: '#394b59' }}>{node.node_id}</span>
+                              <Tag intent={node.is_busy ? 'success' : 'none'} minimal style={{ fontSize: '9px', padding: '2px 6px' }}>
+                                {node.is_busy ? 'BUSY' : 'IDLE'}
+                              </Tag>
+                            </div>
+
+                            <NumericInput
+                              value={node.service_rate}
+                              onValueChange={async (val) => {
+                                try {
+                                  await api.updateServiceNode(simulationId!, node.node_id, {
+                                    service_rate: val,
+                                    service_time_variation: 0.2,
+                                  });
+                                } catch (err) {
+                                  console.error('Failed to update node:', err);
+                                }
+                              }}
+                              min={0.1}
+                              max={2.0}
+                              stepSize={0.05}
+                              minorStepSize={0.01}
+                              style={{ width: '90px' }}
+                              small
+                            />
+
+                            <div style={{ fontSize: '9px', color: '#738694', minWidth: '70px', textAlign: 'right' }}>
+                              ~{(1/node.service_rate).toFixed(1)} min/car
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ marginTop: '8px', padding: '6px', backgroundColor: '#f5f8fa', borderRadius: '3px', fontSize: '10px', color: '#5c7080' }}>
+                <strong>💡</strong> Adjust rates in real-time. Lower = slower service.
+              </div>
+            </Collapse>
+          </Card>
+        )}
       </div>
 
       {/* Floating Metrics Panel - Top Right (below nav controls) */}

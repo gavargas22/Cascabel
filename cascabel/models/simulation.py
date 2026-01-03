@@ -103,8 +103,14 @@ class Simulation:
     def advance_time(self):
         """
         Advance simulation time and return time delta.
+
+        With time_factor=1.0 and loop sleep of 0.1s, this advances simulation
+        by 0.1 seconds per iteration to match real-time (1:1 ratio).
         """
-        delta_t_amount = self.simulation_state["time_factor"]
+        # Delta is time_factor * loop_interval (0.1s)
+        # For real-time: time_factor=1.0 means 0.1s simulation per 0.1s real time
+        loop_interval = 0.1  # Must match the asyncio.sleep interval
+        delta_t_amount = self.simulation_state["time_factor"] * loop_interval
         self.temporal_state["simulation_time"] += delta_t_amount
         return delta_t_amount
 

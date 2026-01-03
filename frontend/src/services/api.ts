@@ -149,14 +149,20 @@ export const api = {
     return response.json();
   },
 
-  // Update service node rate
-  updateServiceNodeRate: async (simulationId: string, nodeId: string, rate: number): Promise<{ node_id: string; new_rate: number; message: string }> => {
-    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/service_node/${nodeId}?rate=${rate}`, {
+  // Update service node configuration
+  updateServiceNode: async (
+    simulationId: string,
+    nodeId: string,
+    config: { service_rate: number; service_time_variation?: number }
+  ): Promise<{ node_id: string; service_rate: number; service_time_variation: number; message: string }> => {
+    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/service_node/${nodeId}`, {
       method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to update service node rate: ${response.statusText}`);
+      throw new Error(`Failed to update service node: ${response.statusText}`);
     }
 
     return response.json();
@@ -204,13 +210,31 @@ export const api = {
   },
 
   // Add service station
-  addServiceStation: async (simulationId: string, queueId?: number): Promise<{ station_id: string; queue_id: number; service_rate: number }> => {
-    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/add_station${queueId !== undefined ? `?queue_id=${queueId}` : ''}`, {
+  addServiceStation: async (
+    simulationId: string,
+    config: { queue_id: number; service_rate?: number; service_time_variation?: number }
+  ): Promise<{ station_id: string; queue_id: number; service_rate: number; service_time_variation: number }> => {
+    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/add_station`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
     });
 
     if (!response.ok) {
       throw new Error(`Failed to add service station: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  // Remove service station
+  removeServiceNode: async (simulationId: string, nodeId: string): Promise<{ node_id: string; message: string }> => {
+    const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/service_node/${nodeId}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to remove service node: ${response.statusText}`);
     }
 
     return response.json();

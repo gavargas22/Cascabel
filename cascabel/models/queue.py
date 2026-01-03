@@ -76,7 +76,10 @@ class CarQueue:
         # They will travel toward position max (increasing position toward booth)
         initial_position = 0.0  # Start at beginning of linestring (north)
         car = Car(car_id, sampling_rate, phone_config, initial_position=initial_position)
-        car.status = "approaching"  # Start in approaching state
+
+        # Set initial status to approaching and record arrival time
+        current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+        car.set_status("approaching", current_time)
 
         # Give each car a preferred speed - check for custom physics config
         if hasattr(self, 'physics_config') and self.physics_config:
@@ -190,9 +193,13 @@ class CarQueue:
         if not self.car_positions:
             return
 
+        # Get current simulation time for statistics
+        current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+
         # Sort cars by position (front of queue first - HIGHEST position number)
         # Position increases as cars approach the booth (toward waitline_length)
-        sorted_cars = sorted(self.cars.values(), key=lambda c: c.position, reverse=True)
+        # Secondary sort by car_id to maintain arrival order (FIFO) when positions are similar
+        sorted_cars = sorted(self.cars.values(), key=lambda c: (-c.position, c.car_id))
 
         # Get traffic control points from waitline
         traffic_control_points = self.waitline.traffic_control_points if self.waitline else []
@@ -223,8 +230,16 @@ class CarQueue:
                     front_car = sorted_cars[i - 1]  # Car ahead (higher position)
                     distance_to_front = front_car.position - car.position - front_car.length
 
-                    # If car ahead is queued, being served, or completed (exiting), and we're very close, join the queue
-                    if front_car.status in ["queued", "serving", "completed"] and distance_to_front < self.safe_distance * 1.5:
+                    # Join queue if car ahead is queued/serving AND we're getting close
+                    # Use a larger detection distance to form realistic queue behavior
+                    if front_car.status in ["queued", "serving"]:
+                        # Join the queue when within reasonable following distance
+                        # This allows the queue to grow naturally from the back
+                        queue_join_distance = self.safe_distance * 3  # More realistic queue detection
+                        if distance_to_front < queue_join_distance:
+                            should_queue = True
+                    # Also join if car ahead just completed and is exiting but we're very close
+                    elif front_car.status == "completed" and distance_to_front < self.safe_distance * 1.5:
                         should_queue = True
                 else:
                     # No car ahead - check if we're close enough to booth to queue
@@ -285,12 +300,14 @@ class CarQueue:
 
                 # Use physics to update (gradual acceleration/deceleration)
                 car.update_physics(target_velocity, dt)
+                car.update_statistics(current_time, dt)
 
             elif car.status == "serving":
                 # Car being served - stationary at booth
                 target_velocity = 0.0
                 car.position = booth_position  # Keep at booth
                 car.update_physics(target_velocity, dt)
+                car.update_statistics(current_time, dt)
 
             elif car.status == "queued":
                 # Car is in queue - handle based on position
@@ -303,42 +320,76 @@ class CarQueue:
                     else:
                         # Close enough - stop and wait
                         target_velocity = 0.0
+                    car.update_physics(target_velocity, dt)
+                    car.update_statistics(current_time, dt)
                 else:
-                    # Following cars in queue - move slowly toward car ahead
+                    # Following cars in queue - maintain proper spacing behind car ahead
                     front_car = sorted_cars[i - 1]
-                    distance_to_front = front_car.position - car.position - front_car.length
 
-                    # Queue movement behavior - slow crawl forward
-                    if distance_to_front > self.safe_distance * 1.5:
-                        # Gap too large - move forward at queue speed (3 mph)
-                        target_velocity = car.queue_velocity
-                    elif distance_to_front > self.safe_distance:
-                        # Normal queue spacing - creep forward slowly
-                        target_velocity = car.queue_velocity * 0.5
-                    elif distance_to_front > self.safe_distance * 0.5:
-                        # Getting close - very slow creep
-                        target_velocity = car.queue_velocity * 0.3
+                    # Calculate ideal position (safe_distance behind front car)
+                    ideal_position = front_car.position - front_car.length - self.safe_distance
+                    current_position = car.position
+                    position_error = ideal_position - current_position
+
+                    # CRITICAL: Never allow a car to pass a car that arrived before it
+                    # Check if front car has lower car_id (arrived first)
+                    if front_car.car_id < car.car_id:
+                        # Front car arrived first - ensure we never pass it
+                        max_allowed_position = front_car.position - front_car.length - 0.5
+                        if current_position > max_allowed_position:
+                            # Too close - immediately set position behind front car
+                            car.position = max_allowed_position
+                            target_velocity = 0.0
+                        elif position_error < -0.5:
+                            # Too close - push back to ideal spacing
+                            car.position = max(0, ideal_position)
+                            target_velocity = 0.0
+                        # If too far back, move forward
+                        elif position_error > self.safe_distance:
+                            # Large gap - move forward at queue speed
+                            target_velocity = car.queue_velocity
+                        elif position_error > 0.5:
+                            # Small gap - creep forward slowly
+                            target_velocity = car.queue_velocity * 0.5
+                        else:
+                            # At ideal spacing - maintain position
+                            target_velocity = 0.0
                     else:
-                        # Too close - stop
-                        target_velocity = 0.0
+                        # This shouldn't happen if sorting is correct, but handle gracefully
+                        # If somehow a car that arrived later is ahead, just maintain spacing
+                        if position_error < -0.5:
+                            car.position = max(0, ideal_position)
+                            target_velocity = 0.0
+                        elif position_error > self.safe_distance:
+                            target_velocity = car.queue_velocity
+                        elif position_error > 0.5:
+                            target_velocity = car.queue_velocity * 0.5
+                        else:
+                            target_velocity = 0.0
 
-                car.update_physics(target_velocity, dt)
+                    car.update_physics(target_velocity, dt)
+                    car.update_statistics(current_time, dt)
 
-        # Handle completed cars - let them drive past booth then remove
-        removal_distance = 20.0  # Remove cars 20m past booth
-        cars_to_remove = []
-        for car in self.cars.values():
-            if car.status == "completed":
+            elif car.status == "completed":
                 # Car has finished service, now driving away from booth
                 # Accelerate to exit speed
                 target_velocity = car.max_velocity
                 car.update_physics(target_velocity, dt)
+                car.update_statistics(current_time, dt)
 
+        # Remove completed cars that have driven far enough past booth
+        removal_distance = 20.0  # Remove cars 20m past booth
+        cars_to_remove = []
+        for car in self.cars.values():
+            if car.status == "completed":
                 # Check if car has driven far enough past booth to be removed
                 if car.position > booth_position + removal_distance:
+                    # Set exit time before removing
+                    if not car.exit_time:
+                        car.exit_time = current_time
                     cars_to_remove.append(car.car_id)
 
-        # Remove cars that have exited
+        # Remove cars that have exited (they remain in car_history for lookup)
         for car_id in cars_to_remove:
             if car_id in self.cars:
                 del self.cars[car_id]

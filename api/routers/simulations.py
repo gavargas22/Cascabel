@@ -7,12 +7,13 @@ FastAPI router for border crossing simulation endpoints.
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, WebSocket
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, Optional, List
 import uuid
 from datetime import datetime
 import os
 import json
+import asyncio
 from pathlib import Path
 
 from cascabel.models.waitline import WaitLine
@@ -67,6 +68,19 @@ class TimeSpeedUpdate(BaseModel):
     time_factor: float
 
 
+class ServiceNodeConfig(BaseModel):
+    """Configuration for updating a service node."""
+    service_rate: float = Field(..., gt=0, description="Service rate in cars/minute")
+    service_time_variation: float = Field(0.2, ge=0, le=1, description="Coefficient of variation")
+
+
+class AddServiceNodeRequest(BaseModel):
+    """Request to add a new service node to a queue."""
+    queue_id: int = Field(..., ge=0, description="Queue ID to add node to")
+    service_rate: float = Field(3.0, gt=0, description="Service rate in cars/minute")
+    service_time_variation: float = Field(0.2, ge=0, le=1, description="Coefficient of variation")
+
+
 async def run_simulation(simulation_id: str):
     """
     Run the simulation in the background with real-time WebSocket updates.
@@ -83,132 +97,141 @@ async def run_simulation(simulation_id: str):
         import asyncio
         for i in range(20):
             if simulation_id in websockets and len(websockets[simulation_id]) > 0:
-                print(f"WebSocket clients connected: {len(websockets[simulation_id])}")
                 break
             await asyncio.sleep(0.1)
-        else:
-            print(f"WARNING: No WebSocket clients connected after 2 seconds for {simulation_id}")
 
         simulation.simulation_state["running"] = True
         iteration = 0
 
         while simulation.simulation_state["running"]:
-            iteration += 1
-            dt = simulation.advance_time()
-            simulation.border_crossing.advance_time(dt)
-            if not simulation.should_continue():
-                simulation.simulation_state["running"] = False
-            simulation.record_positions()
+            try:
+                iteration += 1
+                dt = simulation.advance_time()
+                simulation.border_crossing.advance_time(dt)
+                if not simulation.should_continue():
+                    simulation.simulation_state["running"] = False
+                simulation.record_positions()
 
-            # Send real-time update
-            # Collect car data
-            cars_data = []
-            for queue in simulation.border_crossing.queues:
-                for car in queue.cars.values():
-                    # Get GPS position along waitline
-                    position_point = (
-                        simulation.waitline.compute_position_at_distance_from_start(
-                            car.position
+                # Send real-time update
+                # Collect car data
+                cars_data = []
+                for queue in simulation.border_crossing.queues:
+                    for car in queue.cars.values():
+                        # Get GPS position along waitline
+                        position_point = (
+                            simulation.waitline.compute_position_at_distance_from_start(
+                                car.position
+                            )
                         )
+                        if position_point and simulation.bounds_polygon:
+                            # Constrain position to bounds
+                            position_point = constrain_point_to_bounds(
+                                position_point, simulation.bounds_polygon
+                            )
+
+                        # Convert UTM to lat/lon coordinates
+                        if position_point:
+                            position_coords = simulation.waitline.utm_to_latlon(
+                                position_point
+                            )
+                        else:
+                            position_coords = [0, 0]
+
+                        car_data = {
+                            "id": str(car.car_id),
+                            "position": position_coords,
+                            "status": car.status,
+                            "velocity": float(car.velocity) if car.velocity is not None else None,
+                            "acceleration": float(car.acceleration) if car.acceleration is not None else None,
+                            "queue_id": int(car.queue_id) if car.queue_id is not None else None,
+                            "arrival_time": float(car.arrival_time) if car.arrival_time is not None else None,
+                            "service_start_time": float(car.service_start_time) if car.service_start_time is not None else None,
+                            "completion_time": float(car.completion_time) if car.completion_time is not None else None,
+                            "distance_traveled": float(car.position) if car.position is not None else None,
+                        }
+                        cars_data.append(car_data)
+
+                # Collect queue data
+                queues_data = []
+                for i, queue in enumerate(simulation.border_crossing.queues):
+                    throughput = len([node for node in queue.service_nodes if node.is_busy])
+                    queues_data.append(
+                        {"length": len(queue.car_positions), "throughput": throughput}
                     )
-                    if position_point and simulation.bounds_polygon:
-                        # Constrain position to bounds
-                        position_point = constrain_point_to_bounds(
-                            position_point, simulation.bounds_polygon
-                        )
 
-                    # Convert UTM to lat/lon coordinates
-                    if position_point:
-                        position_coords = simulation.waitline.utm_to_latlon(
-                            position_point
-                        )
-                    else:
-                        position_coords = [0, 0]
+                # Calculate average wait time from completed cars history
+                completed_cars = simulation.border_crossing.completed_cars
+                avg_wait_time = None
 
-                    car_data = {
-                        "id": str(car.car_id),
-                        "position": position_coords,
-                        "status": car.status,
-                        "velocity": float(car.velocity) if car.velocity is not None else None,
-                        "acceleration": float(car.acceleration) if car.acceleration is not None else None,
-                        "queue_id": int(car.queue_id) if car.queue_id is not None else None,
-                        "arrival_time": float(car.arrival_time) if car.arrival_time is not None else None,
-                        "service_start_time": float(car.service_start_time) if car.service_start_time is not None else None,
-                        "completion_time": float(car.completion_time) if car.completion_time is not None else None,
-                        "distance_traveled": float(car.position) if car.position is not None else None,
-                    }
-                    cars_data.append(car_data)
+                if completed_cars:
+                    # Calculate from cars that have both arrival and service start times
+                    wait_times = [
+                        car.service_start_time - car.arrival_time
+                        for car in completed_cars
+                        if car.service_start_time and car.arrival_time and car.service_start_time >= car.arrival_time
+                    ]
+                    if wait_times:
+                        avg_wait_time = sum(wait_times) / len(wait_times)
 
-            # Collect queue data
-            queues_data = []
-            for i, queue in enumerate(simulation.border_crossing.queues):
-                throughput = len([node for node in queue.service_nodes if node.is_busy])
-                queues_data.append(
-                    {"length": len(queue.car_positions), "throughput": throughput}
-                )
+                # Get traffic control points from waitline
+                traffic_control_points = []
+                if simulation.border_crossing.queues:
+                    first_queue = simulation.border_crossing.queues[0]
+                    if first_queue.waitline:
+                        traffic_control_points = first_queue.waitline.traffic_control_points
 
-            # Calculate average wait time from completed cars history
-            completed_cars = simulation.border_crossing.completed_cars
-            avg_wait_time = None
-            if completed_cars:
-                # Calculate from cars that have both arrival and service start times
-                wait_times = [
-                    car.service_start_time - car.arrival_time
-                    for car in completed_cars
-                    if car.service_start_time and car.arrival_time and car.service_start_time >= car.arrival_time
-                ]
-                if wait_times:
-                    avg_wait_time = sum(wait_times) / len(wait_times)
-                    # Debug: Log if we have unusual wait times
-                    if avg_wait_time < 0:
-                        print(f"WARNING: Negative average wait time: {avg_wait_time}")
-                        for car in completed_cars[:5]:  # Check first few cars
-                            if car.service_start_time and car.arrival_time:
-                                print(f"  Car {car.car_id}: arrival={car.arrival_time:.2f}, service_start={car.service_start_time:.2f}, wait={car.service_start_time - car.arrival_time:.2f}")
+                # Get service node states
+                service_nodes_data = []
+                for i, queue in enumerate(simulation.border_crossing.queues):
+                    for node in queue.service_nodes:
+                        node_state = node.get_state(i)
+                        service_nodes_data.append({
+                            "node_id": node_state.node_id,
+                            "queue_id": node_state.queue_id,
+                            "is_busy": node_state.is_busy,
+                            "current_car_id": node_state.current_car_id,
+                            "service_rate": node_state.service_rate,
+                            "total_served": node_state.total_served,
+                            "total_service_time": node_state.total_service_time,
+                        })
 
-            # Get traffic control points from waitline
-            traffic_control_points = []
-            if simulation.border_crossing.queues:
-                first_queue = simulation.border_crossing.queues[0]
-                if first_queue.waitline:
-                    traffic_control_points = first_queue.waitline.traffic_control_points
-
-            message = {
-                "type": "simulation_update",
-                "data": {
-                    "cars": cars_data,
-                    "queues": queues_data,
-                    "metrics": {
-                        "total_arrivals": int(simulation.border_crossing.total_arrivals),
-                        "total_completions": int(simulation.border_crossing.total_completions),
-                        "average_wait_time": float(avg_wait_time) if avg_wait_time is not None else None,
-                        "simulation_time": float(simulation.temporal_state.get('simulation_time', 0)),
+                message = {
+                    "type": "simulation_update",
+                    "data": {
+                        "cars": cars_data,
+                        "queues": queues_data,
+                        "metrics": {
+                            "total_arrivals": int(simulation.border_crossing.total_arrivals),
+                            "total_completions": int(simulation.border_crossing.total_completions),
+                            "average_wait_time": float(avg_wait_time) if avg_wait_time is not None else None,
+                            "simulation_time": float(simulation.temporal_state.get('simulation_time', 0)),
+                        },
+                        "traffic_control_points": traffic_control_points,
+                        "service_nodes": service_nodes_data,
                     },
-                    "traffic_control_points": traffic_control_points,
-                },
-            }
+                }
 
-            # Log every 10 iterations
-            if iteration % 10 == 0:
-                print(f"Iteration {iteration}: {len(cars_data)} cars, {simulation.border_crossing.total_arrivals} arrivals, {simulation.border_crossing.total_completions} completions, sim_time={simulation.temporal_state['simulation_time']:.1f}s")
-                if len(cars_data) > 0:
-                    print(f"  First car position: {cars_data[0]['position']}, status: {cars_data[0]['status']}")
-                if iteration == 10:
-                    print(f"  Control points in message: {len(traffic_control_points)}")
-
-            if simulation_id in websockets:
-                ws_count = len(websockets[simulation_id])
-                for ws in websockets[simulation_id]:
-                    try:
-                        await ws.send_json(message)
-                    except Exception as e:
-                        print(f"Error sending WebSocket message: {e}")
-            else:
+                # Log simulation progress every 100 iterations (~10 seconds)
                 if iteration % 100 == 0:
-                    print(f"WARNING: No WebSocket clients for {simulation_id}")
+                    print(f"Simulation {simulation_id}: {len(cars_data)} cars active, {simulation.border_crossing.total_arrivals} arrivals, {simulation.border_crossing.total_completions} completions, time={simulation.temporal_state['simulation_time']:.1f}s")
 
-            # Small delay to prevent flooding
-            await asyncio.sleep(0.1)
+                if simulation_id in websockets:
+                    for ws in websockets[simulation_id]:
+                        try:
+                            await ws.send_json(message)
+                        except Exception as e:
+                            print(f"Error sending WebSocket message: {e}")
+
+                # Small delay to prevent flooding
+                await asyncio.sleep(0.1)
+
+            except Exception as e:
+                print(f"ERROR in simulation loop iteration {iteration}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue running unless it's a critical error
+                if "running" not in simulation.simulation_state:
+                    break
 
         # Collect telemetry data
         if hasattr(simulation, "telemetry_data"):
@@ -318,7 +341,7 @@ async def start_simulation(
         )
 
 
-@router.post("/{simulation_id}/stop", response_model=Dict[str, str])
+@router.post("/simulation/{simulation_id}/stop", response_model=Dict[str, str])
 async def stop_simulation(simulation_id: str):
     """
     Stop a running simulation and save telemetry data to database.
@@ -338,10 +361,23 @@ async def stop_simulation(simulation_id: str):
     sim["status"] = "stopped"
     sim["end_time"] = datetime.now()
 
+    # Stop the simulation loop
+    simulation = sim["simulation"]
+    simulation.simulation_state["running"] = False
+
+    # Give the simulation loop a moment to finish its current iteration
+    await asyncio.sleep(0.5)
+
     try:
         # Collect telemetry data from all cars
-        simulation = sim["simulation"]
         db = TelemetryDatabase()
+
+        # Collect all cars from all queues
+        all_cars = []
+        for queue in simulation.border_crossing.queues:
+            all_cars.extend(queue.cars.values())
+        # Also include completed cars
+        all_cars.extend(simulation.border_crossing.completed_cars)
 
         # Save simulation metadata
         avg_wait_time = simulation.border_crossing.get_average_wait_time()
@@ -349,7 +385,7 @@ async def stop_simulation(simulation_id: str):
             simulation_id=simulation_id,
             start_time=sim["start_time"].timestamp(),
             end_time=sim["end_time"].timestamp(),
-            total_cars=len(simulation.border_crossing.all_cars),
+            total_cars=len(all_cars),
             total_arrivals=simulation.border_crossing.total_arrivals,
             total_completions=simulation.border_crossing.total_completions,
             average_wait_time=avg_wait_time if avg_wait_time and avg_wait_time > 0 else None,
@@ -359,7 +395,7 @@ async def stop_simulation(simulation_id: str):
 
         # Collect all telemetry records from all cars
         telemetry_records = []
-        for car in simulation.border_crossing.all_cars:
+        for car in all_cars:
             if hasattr(car, "telemetry_records") and car.telemetry_records:
                 for record in car.telemetry_records:
                     # Calculate wait time if car has completed service
@@ -367,20 +403,21 @@ async def stop_simulation(simulation_id: str):
                     if car.service_start_time and car.arrival_time:
                         wait_time = car.service_start_time - car.arrival_time
 
+                    # Extract telemetry data - the record has field names like locationLatitude, not nested objects
                     telemetry_records.append(
                         {
                             "simulation_id": simulation_id,
                             "car_id": car.car_id,
-                            "timestamp": record.get("timestamp", 0),
-                            "latitude": record["gps"]["latitude"],
-                            "longitude": record["gps"]["longitude"],
-                            "altitude": record["gps"].get("altitude"),
-                            "gps_accuracy": record["gps"].get("accuracy"),
-                            "speed": record["gps"].get("speed", 0),
-                            "heading": record["gps"].get("heading", 0),
-                            "acceleration_x": record["accelerometer"]["x"],
-                            "acceleration_y": record["accelerometer"]["y"],
-                            "acceleration_z": record["accelerometer"]["z"],
+                            "timestamp": record.get("locationTimestamp_since1970", 0),
+                            "latitude": record.get("locationLatitude", 0.0),
+                            "longitude": record.get("locationLongitude", 0.0),
+                            "altitude": record.get("locationAltitude", 0.0),
+                            "gps_accuracy": record.get("locationHorizontalAccuracy", 0.0),
+                            "speed": record.get("locationSpeed", 0.0),
+                            "heading": record.get("locationTrueHeading", 0.0),
+                            "acceleration_x": record.get("accelerometerAccelerationX", 0.0),
+                            "acceleration_y": record.get("accelerometerAccelerationY", 0.0),
+                            "acceleration_z": record.get("accelerometerAccelerationZ", 0.0),
                             "car_status": car.status,
                             "queue_id": car.queue_id,
                             "position_on_path": car.position,
@@ -419,6 +456,38 @@ async def stop_simulation(simulation_id: str):
             status_code=500,
             detail=f"Failed to stop simulation and save data: {str(e)}",
         )
+
+
+@router.get("/simulation/{simulation_id}/car/{car_id}")
+async def get_car_details(simulation_id: str, car_id: int):
+    """
+    Get detailed statistics for a specific car.
+
+    Args:
+        simulation_id: ID of the simulation
+        car_id: ID of the car
+
+    Returns:
+        Comprehensive car statistics including timing, speed, distance, etc.
+    """
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim = simulations[simulation_id]
+    simulation = sim["simulation"]
+
+    # Check car_history in border_crossing
+    if car_id in simulation.border_crossing.car_history:
+        car = simulation.border_crossing.car_history[car_id]
+        return car.get_comprehensive_stats()
+
+    # If not in history, check active cars in all queues
+    for queue in simulation.border_crossing.queues:
+        if car_id in queue.cars:
+            car = queue.cars[car_id]
+            return car.get_comprehensive_stats()
+
+    raise HTTPException(status_code=404, detail=f"Car {car_id} not found")
 
 
 @router.post("/grand-simulate", response_model=Dict[str, str])
@@ -699,9 +768,9 @@ async def add_car_to_simulation(
 
 @router.put("/simulation/{simulation_id}/service_node/{node_id}")
 async def update_service_node_rate(
-    simulation_id: str, node_id: str, update: UpdateRate
+    simulation_id: str, node_id: str, config: ServiceNodeConfig
 ):
-    """Update the service rate of a specific service node."""
+    """Update the configuration of a specific service node."""
     if simulation_id not in simulations:
         raise HTTPException(status_code=404, detail="Simulation not found")
 
@@ -715,7 +784,8 @@ async def update_service_node_rate(
         for queue in border_crossing.queues:
             for node in queue.service_nodes:
                 if node.node_id == node_id:
-                    node.service_rate = update.rate
+                    node.service_rate = config.service_rate
+                    node.service_time_variation = config.service_time_variation
                     node_found = True
                     break
             if node_found:
@@ -726,13 +796,14 @@ async def update_service_node_rate(
 
         return {
             "node_id": node_id,
-            "new_rate": update.rate,
-            "message": "Service rate updated",
+            "service_rate": config.service_rate,
+            "service_time_variation": config.service_time_variation,
+            "message": "Service node configuration updated",
         }
 
     except Exception as e:
         raise HTTPException(
-            status_code=400, detail=f"Failed to update service rate: {str(e)}"
+            status_code=400, detail=f"Failed to update service node: {str(e)}"
         )
 
 
@@ -892,7 +963,7 @@ async def update_time_speed(simulation_id: str, update: TimeSpeedUpdate):
 
 
 @router.post("/simulation/{simulation_id}/add_station")
-async def add_service_station(simulation_id: str, queue_id: int = Query(0)):
+async def add_service_station(simulation_id: str, request: AddServiceNodeRequest):
     """Add a new service station to the specified queue."""
     if simulation_id not in simulations:
         raise HTTPException(status_code=404, detail="Simulation not found")
@@ -900,22 +971,69 @@ async def add_service_station(simulation_id: str, queue_id: int = Query(0)):
     sim_data = simulations[simulation_id]
     border_crossing = sim_data["simulation"].border_crossing
 
-    # Add new service node to the specified queue
-    if queue_id >= len(border_crossing.queues):
+    # Validate queue ID
+    if request.queue_id >= len(border_crossing.queues):
         raise HTTPException(status_code=400, detail="Invalid queue ID")
 
-    queue = border_crossing.queues[queue_id]
+    queue = border_crossing.queues[request.queue_id]
 
-    # Create new service node
-    node_id = f"q{queue_id}_n{len(queue.service_nodes)}"
-    service_rate = 3.0  # Default service rate
-    new_node = ServiceNode(node_id, service_rate)
+    # Create new service node with custom configuration
+    node_id = f"q{request.queue_id}_n{len(queue.service_nodes)}"
+    new_node = ServiceNode(node_id, request.service_rate, request.service_time_variation)
 
     # Add to queue and border crossing
     queue.service_nodes.append(new_node)
     border_crossing.service_nodes.append(new_node)
 
-    return {"station_id": node_id, "queue_id": queue_id, "service_rate": service_rate}
+    return {
+        "station_id": node_id,
+        "queue_id": request.queue_id,
+        "service_rate": request.service_rate,
+        "service_time_variation": request.service_time_variation,
+    }
+
+
+@router.delete("/simulation/{simulation_id}/service_node/{node_id}")
+async def remove_service_node(simulation_id: str, node_id: str):
+    """Remove a service node from the simulation."""
+    if simulation_id not in simulations:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    sim_data = simulations[simulation_id]
+    border_crossing = sim_data["simulation"].border_crossing
+
+    # Find and remove the service node
+    node_found = False
+    for queue in border_crossing.queues:
+        for i, node in enumerate(queue.service_nodes):
+            if node.node_id == node_id:
+                # Don't allow removing if it's the only node in the queue
+                if len(queue.service_nodes) <= 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot remove the last service node from a queue"
+                    )
+
+                # Remove from queue
+                queue.service_nodes.pop(i)
+
+                # Remove from border crossing
+                border_crossing.service_nodes = [
+                    n for n in border_crossing.service_nodes if n.node_id != node_id
+                ]
+
+                node_found = True
+                break
+        if node_found:
+            break
+
+    if not node_found:
+        raise HTTPException(status_code=404, detail="Service node not found")
+
+    return {
+        "node_id": node_id,
+        "message": "Service node removed successfully",
+    }
 
 
 @router.websocket("/ws/{simulation_id}")
