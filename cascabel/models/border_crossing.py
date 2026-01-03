@@ -162,8 +162,9 @@ class BorderCrossing:
         self.total_completions = 0
         self.current_time = 0.0
 
-        # Completed cars history for metrics
-        self.completed_cars = []  # Store completed cars for statistics
+        # Car history for metrics and lookup
+        self.completed_cars = []  # Cars that completed service
+        self.car_history = {}  # All cars by ID (including removed ones)
 
     def _initialize_queues_and_nodes(self):
         """Initialize queues and service nodes."""
@@ -224,6 +225,9 @@ class BorderCrossing:
             car.queue_id = queue_index
             # Don't override the status - let it remain "approaching" as set by queue.add_car()
             # The car will transition to "queued" when it reaches the booth
+
+            # Store in car history for later lookup
+            self.car_history[car.car_id] = car
 
         return car, queue_index
 
