@@ -11,10 +11,11 @@ class Car:
 
     Enhanced car model that simulates realistic vehicle physics for queue movement.
     Generates telemetry data matching mobile device sensor formats.
+    Each car has its own dynamic path from a random starting point to the border crossing.
     """
 
     def __init__(
-        self, car_id, sampling_rate=10, phone_config=None, initial_position=0.0
+        self, car_id, sampling_rate=10, phone_config=None, initial_position=0.0, waitline=None
     ):
         self.car_id = car_id
         self.sampling_rate = sampling_rate
@@ -28,6 +29,9 @@ class Car:
                 self.phone_config = phone_config
         else:
             self.phone_config = PhoneConfig()
+
+        # Dynamic path for this car (can be unique per car)
+        self.waitline = waitline  # DynamicWaitLine or regular WaitLine
 
         # Physics properties (typical passenger car in border crossing scenario)
         self.mass = 1500  # kg
@@ -46,9 +50,11 @@ class Car:
         self.status = "arriving"  # arriving, queued, serving, completed
         self.queue_id = None
         self.arrival_time = None
+        self.queue_start_time = None  # When car first entered queued state (blocked by traffic)
         self.service_start_time = None
         self.completion_time = None
         self.exit_time = None  # When car exits the system (removed from simulation)
+        self.wait_time = None  # Calculated: service_start_time - queue_start_time
 
         # Journey statistics
         self.total_distance = 0.0  # Total distance traveled (meters)
@@ -69,17 +75,20 @@ class Car:
         # Telemetry generator will be initialized later with waitline
         self.telemetry_gen = None
 
-    def set_telemetry_generator(self, waitline):
+    def set_telemetry_generator(self, waitline=None):
         """
         Initialize telemetry generator with waitline.
 
         Args:
-            waitline: WaitLine object for path geometry
+            waitline: WaitLine object for path geometry (optional, uses car's own waitline if not provided)
         """
         if self.phone_config:
             from ..simulation.telemetry.telemetry_generator import TelemetryGenerator
 
-            self.telemetry_gen = TelemetryGenerator(waitline, self.phone_config.dict())
+            # Use provided waitline or car's own waitline
+            path = waitline if waitline is not None else self.waitline
+            if path:
+                self.telemetry_gen = TelemetryGenerator(path, self.phone_config.dict())
 
     def generate_telemetry(self, timestamp):
         """
@@ -202,9 +211,18 @@ class Car:
         # Set arrival_time when car first enters the system (approaching or queued)
         if status in ["approaching", "queued"] and not self.arrival_time:
             self.arrival_time = timestamp or datetime.now().timestamp()
-        # Set service_start_time when service begins
+
+        # Set queue_start_time when first entering queued state (blocked by traffic)
+        if status == "queued" and not self.queue_start_time:
+            self.queue_start_time = timestamp or datetime.now().timestamp()
+
+        # Set service_start_time when service begins and calculate wait time
         if status == "serving" and not self.service_start_time:
             self.service_start_time = timestamp or datetime.now().timestamp()
+            # Calculate wait time if we have queue_start_time
+            if self.queue_start_time:
+                self.wait_time = self.service_start_time - self.queue_start_time
+
         # Set completion_time when service completes
         if status == "completed" and not self.completion_time:
             self.completion_time = timestamp or datetime.now().timestamp()

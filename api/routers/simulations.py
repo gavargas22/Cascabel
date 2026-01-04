@@ -14,6 +14,7 @@ from datetime import datetime
 import os
 import json
 import asyncio
+import traceback
 from pathlib import Path
 
 from cascabel.models.waitline import WaitLine
@@ -45,7 +46,15 @@ class SimulationRequest(BaseModel):
     simulation_config: Optional[SimulationConfig] = None
     phone_config: Optional[PhoneConfig] = None
     physics_config: Optional[PhysicsConfig] = None
-    geojson_path: str = "cascabel/paths/usa2mx/bota.geojson"
+
+    # Simplified interface - only need crossing name and direction
+    crossing_name: str = "paso_del_norte"  # Name of border crossing
+    direction: str = "mx2usa"  # Traffic direction: "mx2usa" or "usa2mx"
+
+    # Legacy support (optional, ignored if crossing_name provided)
+    geojson_path: Optional[str] = None
+    use_dynamic_paths: bool = True  # Always use dynamic paths now
+    country_of_origin: Optional[str] = None  # Deprecated, use direction instead
 
 
 class SimulationStatus(BaseModel):
@@ -117,25 +126,36 @@ async def run_simulation(simulation_id: str):
                 cars_data = []
                 for queue in simulation.border_crossing.queues:
                     for car in queue.cars.values():
-                        # Get GPS position along waitline
-                        position_point = (
-                            simulation.waitline.compute_position_at_distance_from_start(
+                        # Get car-specific waitline or use shared waitline
+                        car_waitline = car.waitline if hasattr(car, 'waitline') and car.waitline else simulation.waitline
+
+                        # Get GPS position along car's waitline
+                        position_point = None
+                        position_coords = [0, 0]
+
+                        if car_waitline:
+                            position_point = car_waitline.compute_position_at_distance_from_start(
                                 car.position
                             )
-                        )
-                        if position_point and simulation.bounds_polygon:
-                            # Constrain position to bounds
-                            position_point = constrain_point_to_bounds(
-                                position_point, simulation.bounds_polygon
-                            )
+                            if position_point and simulation.bounds_polygon:
+                                # Constrain position to bounds
+                                position_point = constrain_point_to_bounds(
+                                    position_point, simulation.bounds_polygon
+                                )
 
-                        # Convert UTM to lat/lon coordinates
-                        if position_point:
-                            position_coords = simulation.waitline.utm_to_latlon(
-                                position_point
-                            )
-                        else:
-                            position_coords = [0, 0]
+                            # Convert UTM to lat/lon coordinates
+                            if position_point:
+                                position_coords = car_waitline.utm_to_latlon(
+                                    position_point
+                                )
+
+                        # Get car's path GeoJSON if available
+                        car_path_geojson = None
+                        if car_waitline and hasattr(car_waitline, 'get_path_geojson'):
+                            try:
+                                car_path_geojson = car_waitline.get_path_geojson()
+                            except Exception as e:
+                                print(f"Error getting path for car {car.car_id}: {e}")
 
                         car_data = {
                             "id": str(car.car_id),
@@ -145,9 +165,12 @@ async def run_simulation(simulation_id: str):
                             "acceleration": float(car.acceleration) if car.acceleration is not None else None,
                             "queue_id": int(car.queue_id) if car.queue_id is not None else None,
                             "arrival_time": float(car.arrival_time) if car.arrival_time is not None else None,
+                            "queue_start_time": float(car.queue_start_time) if car.queue_start_time is not None else None,
                             "service_start_time": float(car.service_start_time) if car.service_start_time is not None else None,
                             "completion_time": float(car.completion_time) if car.completion_time is not None else None,
+                            "wait_time": float(car.wait_time) if car.wait_time is not None else None,
                             "distance_traveled": float(car.position) if car.position is not None else None,
+                            "path": car_path_geojson,  # Include car's unique path
                         }
                         cars_data.append(car_data)
 
@@ -291,9 +314,17 @@ async def start_simulation(
 
     # Initialize simulation
     try:
-        # Create waitline
-        waitline = WaitLine(
-            request.geojson_path, {"slow": 0.8, "fast": 0.2}, line_length_seed=1.0
+        # Load and cache OSM graph (will be reused for all cars)
+        from cascabel.paths.utils.optimized_path_generator import load_and_cache_graph
+        graph = load_and_cache_graph(request.crossing_name)
+
+        # Create a reference waitline (each car gets its own optimized path)
+        from cascabel.models.optimized_waitline import OptimizedWaitLine
+        waitline = OptimizedWaitLine(
+            crossing_name=request.crossing_name,
+            direction=request.direction,
+            graph=graph,
+            starting_point=None  # Random for reference
         )
 
         # Apply physics config to border config if provided
@@ -308,6 +339,13 @@ async def start_simulation(
             simulation_config=request.simulation_config,
             phone_config=request.phone_config,
         )
+
+        # Configure border crossing for optimized dynamic paths
+        simulation.border_crossing.use_dynamic_paths = True
+        simulation.border_crossing.crossing_name = request.crossing_name
+        simulation.border_crossing.graph = graph
+        simulation.border_crossing.direction = request.direction
+        simulation.border_crossing.default_country = "mexico" if request.direction == "mx2usa" else "usa"
 
         # Store physics config for use during simulation
         if request.physics_config:
@@ -336,8 +374,13 @@ async def start_simulation(
         }
 
     except Exception as e:
+        # Log full traceback for debugging
+        error_traceback = traceback.format_exc()
+        print(f"Error starting simulation: {error_traceback}")
+
         raise HTTPException(
-            status_code=400, detail=f"Failed to start simulation: {str(e)}"
+            status_code=400,
+            detail=f"Failed to start simulation: {str(e)}\n\nTraceback:\n{error_traceback}"
         )
 
 

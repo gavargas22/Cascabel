@@ -2,6 +2,15 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}"
+    },
+    {
       "name": "Start Backend API",
       "type": "debugpy",
       "request": "launch",
@@ -9,8 +18,10 @@
       "args": [
         "api.main:app",
         "--reload",
-        "--host", "0.0.0.0",
-        "--port", "8000"
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
       ],
       "jinja": true,
       "justMyCode": false,
@@ -40,8 +51,10 @@
       "module": "unittest",
       "args": [
         "discover",
-        "-s", "tests",
-        "-p", "test_*.py"
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py"
       ],
       "console": "integratedTerminal",
       "justMyCode": false,

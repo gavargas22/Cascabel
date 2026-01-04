@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import Map, { Marker, Source, Layer, NavigationControl } from 'react-map-gl';
 import {
   Card,
@@ -11,7 +11,7 @@ import {
   Callout,
 } from '@blueprintjs/core';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { api, BorderCrossingConfig, SimulationConfig, PhoneConfig, PhysicsConfig, BorderCrossing } from '../services/api';
+import { api, BorderCrossingConfig, SimulationConfig, PhysicsConfig } from '../services/api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -25,6 +25,7 @@ interface SimulationUpdate {
       velocity?: number;
       acceleration?: number;
       queue_id?: number;
+      path?: any;  // GeoJSON Feature with car's unique path
     }>;
     queues: Array<{
       length: number;
@@ -42,10 +43,6 @@ interface SimulationUpdate {
       description: string;
       position_meters: number;
       coordinates: [number, number];
-      target_speed_mps?: number;
-      slowdown_distance_meters?: number;
-      stop_distance_meters?: number;
-      queue_start_meters?: number;
     }>;
     service_nodes?: Array<{
       node_id: string;
@@ -59,25 +56,66 @@ interface SimulationUpdate {
   };
 }
 
+// Available crossings with directions
+const CROSSINGS = [
+  { id: 'paso_del_norte', name: 'Paso del Norte (PDN)', center: [-106.4867, 31.7508] },
+  { id: 'bridge_of_the_americas', name: 'Bridge of the Americas (BOTA)', center: [-106.4519, 31.7641] },
+];
+
+const DIRECTIONS = [
+  { value: 'mx2usa', label: 'Mexico → USA (Northbound)' },
+  { value: 'usa2mx', label: 'USA → Mexico (Southbound)' },
+];
+
 const FullscreenDashboard: React.FC = () => {
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [simulationData, setSimulationData] = useState<SimulationUpdate['data'] | null>(null);
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
-  const [geojsonData, setGeojsonData] = useState<any>(null);
+  const [queueGeometry, setQueueGeometry] = useState<any>(null);
 
-  // Helper to format car status for display
-  const formatStatus = (status: string): string => {
-    const statusMap: Record<string, string> = {
-      'approaching': 'Approaching',
-      'queued': 'Waiting in Queue',
-      'serving': 'Being Served',
-      'completed': 'Completed',
-    };
-    return statusMap[status] || status;
-  };
+  // Crossing and direction selection
+  const [selectedCrossing, setSelectedCrossing] = useState('paso_del_norte');
+  const [selectedDirection, setSelectedDirection] = useState('mx2usa');
 
-  // Helper to format simulation time
+  // Panel visibility states
+  const [showConfig, setShowConfig] = useState(true);
+  const [showMetrics, setShowMetrics] = useState(true);
+  const [showPaths, setShowPaths] = useState(true);  // Toggle path visibility
+
+  // Configuration states
+  const [borderConfig, setBorderConfig] = useState<BorderCrossingConfig>({
+    num_queues: 2,
+    nodes_per_queue: [1, 1],
+    arrival_rate: 6.0,
+    service_rates: [0.25, 0.25],
+    queue_assignment: 'shortest',
+    safe_distance: 10.0,
+    max_queue_length: 50,
+  });
+
+  const [simulationConfig, setSimulationConfig] = useState<SimulationConfig>({
+    max_simulation_time: 1800.0,
+    time_factor: 1.0,
+    enable_telemetry: true,
+    enable_position_tracking: true,
+  });
+
+  const [physicsConfig] = useState<PhysicsConfig>({
+    min_speed_mps: 12.1,
+    max_speed_mps: 14.7,
+    safe_distance_meters: 3.0,
+    max_acceleration: 0.75,
+    max_deceleration: 1.25,
+  });
+
+  const [isRunning, setIsRunning] = useState(false);
+
+  // Service time range
+  const [serviceTimeMin, setServiceTimeMin] = useState(3);
+  const [serviceTimeMax, setServiceTimeMax] = useState(6);
+
+  // Helper functions
   const formatSimTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -90,72 +128,38 @@ const FullscreenDashboard: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Panel visibility states
-  const [showConfig, setShowConfig] = useState(true);
-  const [showMetrics, setShowMetrics] = useState(true);
-  const [showCarList, setShowCarList] = useState(true); // Show car list by default
-  const [showServiceNodes, setShowServiceNodes] = useState(false);
-
-  // Configuration states
-  const [borderConfig, setBorderConfig] = useState<BorderCrossingConfig>({
-    num_queues: 2,
-    nodes_per_queue: [1, 1],
-    arrival_rate: 6.0, // 6 cars per minute arriving
-    service_rates: [0.25, 0.25], // ~4 minutes per car (0.25 cars/min = 1 car per 4 min)
-    queue_assignment: 'shortest',
-    safe_distance: 10.0,
-    max_queue_length: 50,
-  });
-
-  const [simulationConfig, setSimulationConfig] = useState<SimulationConfig>({
-    max_simulation_time: 1800.0,
-    time_factor: 1.0,  // Real-time by default
-    enable_telemetry: true,
-    enable_position_tracking: true,
-  });
-
-  const [physicsConfig, setPhysicsConfig] = useState<PhysicsConfig>({
-    min_speed_mps: 12.1,  // 27 mph
-    max_speed_mps: 14.7,  // 33 mph
-    safe_distance_meters: 3.0,
-    max_acceleration: 0.75,
-    max_deceleration: 1.25,
-  });
-
-  const [isRunning, setIsRunning] = useState(false);
-  const [showPhysicsConfig, setShowPhysicsConfig] = useState(false);
-
-  // Service time range (in minutes)
-  const [serviceTimeMin, setServiceTimeMin] = useState(3);
-  const [serviceTimeMax, setServiceTimeMax] = useState(6);
-
-  // Border crossing selection
-  const [availableCrossings, setAvailableCrossings] = useState<BorderCrossing[]>([]);
-  const [selectedCrossing, setSelectedCrossing] = useState<string>('bota-usa2mx');
-
-  // Load available border crossings
-  useEffect(() => {
-    api.getBorderCrossings()
-      .then((data) => {
-        setAvailableCrossings(data.crossings);
-        console.log('Available crossings:', data.crossings);
-      })
-      .catch((err) => console.error('Failed to load border crossings:', err));
-  }, []);
-
-  // Load GeoJSON for selected crossing
-  useEffect(() => {
-    const crossing = availableCrossings.find(c => `${c.id}-${c.direction}` === selectedCrossing);
-    if (crossing) {
-      fetch(`${API_BASE_URL}/geojson/${crossing.direction}/${crossing.id}`)
-        .then((res) => res.json())
-        .then((data) => {
-          console.log('GeoJSON loaded for', crossing.name, ':', data);
-          setGeojsonData(data);
-        })
-        .catch((err) => console.error('Failed to load GeoJSON:', err));
+  const getCarColor = (status: string) => {
+    switch (status) {
+      case 'approaching':
+      case 'arriving':
+        return '#007bff';
+      case 'queued':
+        return '#ffc107';
+      case 'serving':
+        return '#28a745';
+      case 'completed':
+        return '#dc3545';
+      default:
+        return '#6c757d';
     }
-  }, [selectedCrossing, availableCrossings]);
+  };
+
+  // Load queue geometry when crossing changes
+  useEffect(() => {
+    const loadQueueGeometry = async () => {
+      try {
+        const response = await fetch('/cascabel/paths/bounding_boxes.json');
+        const data = await response.json();
+        const geometry = data[selectedCrossing]?.preferred_queue_geometry;
+        setQueueGeometry(geometry);
+        console.log('Queue geometry loaded:', geometry);
+      } catch (error) {
+        console.error('Failed to load queue geometry:', error);
+      }
+    };
+
+    loadQueueGeometry();
+  }, [selectedCrossing]);
 
   // WebSocket connection
   useEffect(() => {
@@ -172,19 +176,11 @@ const FullscreenDashboard: React.FC = () => {
       try {
         const message: SimulationUpdate = JSON.parse(event.data);
         if (message.type === 'simulation_update') {
-          console.log('=== Simulation Update ===');
-          console.log('Cars count:', message.data.cars.length);
-          if (message.data.cars.length > 0) {
-            console.log('First car:', message.data.cars[0]);
-            console.log('First car position:', message.data.cars[0].position);
-            console.log('Position is array?', Array.isArray(message.data.cars[0].position));
-            console.log('Position[0] (lon):', message.data.cars[0].position[0]);
-            console.log('Position[1] (lat):', message.data.cars[0].position[1]);
-          }
-          console.log('Metrics:', message.data.metrics);
-          if (message.data.metrics.average_wait_time !== null && message.data.metrics.average_wait_time !== undefined) {
-            console.log('*** AVERAGE WAIT TIME:', message.data.metrics.average_wait_time, 'seconds');
-          }
+          console.log('Received simulation update:', {
+            carCount: message.data.cars.length,
+            firstCar: message.data.cars[0],
+            queues: message.data.queues.length
+          });
           setSimulationData(message.data);
         }
       } catch (error) {
@@ -210,13 +206,10 @@ const FullscreenDashboard: React.FC = () => {
 
   const handleStartSimulation = async () => {
     try {
-      // Generate service rates with random variation per node
       const generateServiceRates = (numNodes: number) => {
         return Array.from({ length: numNodes }, () => {
-          // Random service time between min and max
           const range = serviceTimeMax - serviceTimeMin;
           const serviceTimeMinutes = serviceTimeMin + Math.random() * range;
-          // Convert to rate (cars per minute)
           return 1 / serviceTimeMinutes;
         });
       };
@@ -224,17 +217,12 @@ const FullscreenDashboard: React.FC = () => {
       const totalNodes = borderConfig.nodes_per_queue.reduce((sum, n) => sum + n, 0);
       const serviceRatesWithVariation = generateServiceRates(totalNodes);
 
-      console.log('Generated service rates (cars/min):', serviceRatesWithVariation);
-      console.log('Service times (min/car):', serviceRatesWithVariation.map(r => (1/r).toFixed(2)));
-
-      // Get selected crossing path
-      const crossing = availableCrossings.find(c => `${c.id}-${c.direction}` === selectedCrossing);
-      const geojsonPath = crossing?.path || 'cascabel/paths/usa2mx/bota.geojson';
-
       const response = await api.startSimulation({
+        crossing_name: selectedCrossing,
+        direction: selectedDirection,
         border_config: {
           ...borderConfig,
-          service_rates: serviceRatesWithVariation, // Use randomized rates
+          service_rates: serviceRatesWithVariation,
         },
         simulation_config: simulationConfig,
         phone_config: {
@@ -245,8 +233,8 @@ const FullscreenDashboard: React.FC = () => {
           device_orientation: 'portrait',
         },
         physics_config: physicsConfig,
-        geojson_path: geojsonPath,
       });
+
       setSimulationId(response.simulation_id);
       console.log('Simulation started:', response.simulation_id);
     } catch (error) {
@@ -258,7 +246,6 @@ const FullscreenDashboard: React.FC = () => {
   const handleStopSimulation = async () => {
     if (simulationId && ws) {
       try {
-        // Call the stop endpoint to kill the simulation and save data
         const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/stop`, {
           method: 'POST',
         });
@@ -266,16 +253,11 @@ const FullscreenDashboard: React.FC = () => {
         if (response.ok) {
           const result = await response.json();
           console.log('Simulation stopped:', result);
-          alert(`Simulation stopped successfully!\n${result.message}\nDatabase: ${result.database_path}`);
-        } else {
-          console.error('Failed to stop simulation:', await response.text());
-          alert('Failed to stop simulation properly, but closing connection...');
+          alert(`Simulation stopped!\n${result.message}`);
         }
       } catch (error) {
         console.error('Error stopping simulation:', error);
-        alert('Error stopping simulation, but closing connection...');
       } finally {
-        // Close websocket and reset state regardless
         ws.close();
         setSimulationId(null);
         setSimulationData(null);
@@ -284,79 +266,97 @@ const FullscreenDashboard: React.FC = () => {
     }
   };
 
-  const getCarColor = (status: string) => {
-    switch (status) {
-      case 'approaching':
-      case 'arriving':
-        return '#007bff';
-      case 'queued':
-        return '#ffc107';
-      case 'serving':
-        return '#28a745';
-      case 'completed':
-        return '#dc3545';
-      default:
-        return '#6c757d';
-    }
-  };
+  // Get map center based on selected crossing
+  const mapCenter = CROSSINGS.find(c => c.id === selectedCrossing)?.center || [-106.4867, 31.7508];
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
       {/* Fullscreen Map */}
       <Map
         initialViewState={{
-          longitude: -106.4519, // Center of the GeoJSON path
-          latitude: 31.7641,
+          longitude: mapCenter[0],
+          latitude: mapCenter[1],
           zoom: 15,
         }}
         style={{ width: '100%', height: '100%' }}
         mapStyle="mapbox://styles/gavargas/ck1yptdx72uqd1cn0x144h6sx"
         mapboxAccessToken={process.env.REACT_APP_MAPBOX_TOKEN}
       >
-        {/* GeoJSON Path Layer */}
-        {geojsonData && (
-          <>
-            <Source id="border-path" type="geojson" data={geojsonData}>
+        {/* Individual Car Paths */}
+        {showPaths && simulationData?.cars.map((car) => {
+          if (!car.path) return null;
+
+          const isSelected = selectedCarId === car.id;
+          const carColor = getCarColor(car.status);
+
+          return (
+            <Source key={`car-path-${car.id}`} id={`car-path-${car.id}`} type="geojson" data={car.path}>
               <Layer
-                id="border-path-line"
+                id={`car-path-line-${car.id}`}
                 type="line"
                 paint={{
-                  'line-color': '#ff0000',
-                  'line-width': 4,
-                  'line-opacity': 0.8,
+                  'line-color': isSelected ? carColor : '#888888',
+                  'line-width': isSelected ? 3 : 1.5,
+                  'line-opacity': isSelected ? 0.8 : 0.15,
                 }}
               />
             </Source>
-          </>
+          );
+        })}
+
+        {/* Queue Geometry Layer (preferred_queue_geometry) - Semi-transparent */}
+        {queueGeometry && showPaths && (
+          <Source id="queue-path" type="geojson" data={queueGeometry}>
+            <Layer
+              id="queue-path-line"
+              type="line"
+              paint={{
+                'line-color': '#ff6b6b',
+                'line-width': 3,
+                'line-opacity': 0.4,  // Semi-transparent
+              }}
+            />
+            <Layer
+              id="queue-path-outline"
+              type="line"
+              paint={{
+                'line-color': '#c92a2a',
+                'line-width': 5,
+                'line-opacity': 0.2,  // Very transparent outline
+              }}
+            />
+          </Source>
         )}
 
         {/* Car Markers */}
-        {simulationData?.cars.map((car) => {
-          console.log(`Rendering marker for car ${car.id} at [${car.position[0]}, ${car.position[1]}]`);
-          return (
-            <Marker
-              key={car.id}
-              longitude={car.position[0]}
-              latitude={car.position[1]}
-              anchor="center"
-              onClick={() => setSelectedCarId(car.id)}
-            >
-              <div
-                style={{
-                  width: selectedCarId === car.id ? '20px' : '14px',
-                  height: selectedCarId === car.id ? '20px' : '14px',
-                  borderRadius: '50%',
-                  backgroundColor: getCarColor(car.status),
-                  border: selectedCarId === car.id ? '3px solid #ffffff' : '2px solid #ffffff',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                }}
-                title={`Car ${car.id} - ${car.status}`}
-              />
-            </Marker>
-          );
-        })}
+        {simulationData?.cars.map((car) => (
+          <Marker
+            key={car.id}
+            longitude={car.position[0]}
+            latitude={car.position[1]}
+            anchor="center"
+            onClick={(e) => {
+              e.originalEvent.stopPropagation();
+              setSelectedCarId(car.id);
+              console.log('Selected car:', car);
+            }}
+          >
+            <div
+              style={{
+                width: selectedCarId === car.id ? '24px' : '16px',
+                height: selectedCarId === car.id ? '24px' : '16px',
+                borderRadius: '50%',
+                backgroundColor: getCarColor(car.status),
+                border: selectedCarId === car.id ? '3px solid #ffffff' : '2px solid #ffffff',
+                boxShadow: '0 3px 10px rgba(0,0,0,0.6)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                zIndex: selectedCarId === car.id ? 1000 : 500,
+              }}
+              title={`Car ${car.id} - ${car.status} - ${car.velocity?.toFixed(1)} m/s`}
+            />
+          </Marker>
+        ))}
 
         <NavigationControl position="top-right" />
       </Map>
@@ -411,29 +411,53 @@ const FullscreenDashboard: React.FC = () => {
             </div>
 
             {isRunning && (
-              <Tag intent="success" large style={{ marginBottom: '10px', width: '100%' }}>
-                ● RUNNING - ID: {simulationId?.substring(0, 8)}...
-              </Tag>
+              <>
+                <Tag intent="success" large style={{ marginBottom: '10px', width: '100%' }}>
+                  ● RUNNING - ID: {simulationId?.substring(0, 8)}...
+                </Tag>
+                {simulationData && (
+                  <div style={{ fontSize: '11px', marginBottom: '10px', textAlign: 'center' }}>
+                    {simulationData.cars.length === 0 ? (
+                      <span style={{ color: '#9e6a03' }}>
+                        ⏳ Waiting for cars to arrive... ({borderConfig.arrival_rate} cars/min)
+                      </span>
+                    ) : (
+                      <span style={{ color: '#0f9960' }}>
+                        🚗 {simulationData.cars.length} car{simulationData.cars.length !== 1 ? 's' : ''} on map
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
             )}
 
             <FormGroup label="Border Crossing" style={{ marginBottom: '10px' }}>
               <HTMLSelect
                 value={selectedCrossing}
                 onChange={(e) => setSelectedCrossing(e.currentTarget.value)}
-                disabled={isRunning || availableCrossings.length === 0}
+                disabled={isRunning}
                 style={{ width: '100%' }}
               >
-                {availableCrossings.length === 0 ? (
-                  <option>Loading...</option>
-                ) : (
-                  availableCrossings
-                    .filter((c) => c.geometry_type === 'LineString')
-                    .map((crossing) => (
-                      <option key={`${crossing.id}-${crossing.direction}`} value={`${crossing.id}-${crossing.direction}`}>
-                        {crossing.name} ({crossing.direction.toUpperCase()})
-                      </option>
-                    ))
-                )}
+                {CROSSINGS.map((crossing) => (
+                  <option key={crossing.id} value={crossing.id}>
+                    {crossing.name}
+                  </option>
+                ))}
+              </HTMLSelect>
+            </FormGroup>
+
+            <FormGroup label="Traffic Direction" style={{ marginBottom: '10px' }}>
+              <HTMLSelect
+                value={selectedDirection}
+                onChange={(e) => setSelectedDirection(e.currentTarget.value)}
+                disabled={isRunning}
+                style={{ width: '100%' }}
+              >
+                {DIRECTIONS.map((dir) => (
+                  <option key={dir.value} value={dir.value}>
+                    {dir.label}
+                  </option>
+                ))}
               </HTMLSelect>
             </FormGroup>
 
@@ -441,10 +465,9 @@ const FullscreenDashboard: React.FC = () => {
               <NumericInput
                 value={borderConfig.num_queues}
                 onValueChange={(val) => {
-                  // Update nodes_per_queue and service_rates arrays to match
                   const newNodesPerQueue = Array(val).fill(1);
-                  const totalNodes = val; // 1 node per queue
-                  const newServiceRates = Array(totalNodes).fill(0.25); // 4 min per car
+                  const totalNodes = val;
+                  const newServiceRates = Array(totalNodes).fill(0.25);
 
                   setBorderConfig({
                     ...borderConfig,
@@ -484,7 +507,6 @@ const FullscreenDashboard: React.FC = () => {
                   stepSize={0.5}
                   style={{ width: '60px' }}
                   disabled={isRunning}
-                  placeholder="Min"
                 />
                 <span>-</span>
                 <NumericInput
@@ -495,7 +517,6 @@ const FullscreenDashboard: React.FC = () => {
                   stepSize={0.5}
                   style={{ width: '60px' }}
                   disabled={isRunning}
-                  placeholder="Max"
                 />
               </div>
             </FormGroup>
@@ -514,212 +535,26 @@ const FullscreenDashboard: React.FC = () => {
               />
             </FormGroup>
 
-            <FormGroup label="Queue Assignment" inline>
-              <HTMLSelect
-                value={borderConfig.queue_assignment}
-                onChange={(e) =>
-                  setBorderConfig({
-                    ...borderConfig,
-                    queue_assignment: e.target.value as any,
-                  })
-                }
-                disabled={isRunning}
-                style={{ width: '150px' }}
-              >
-                <option value="shortest">Shortest</option>
-                <option value="random">Random</option>
-                <option value="round_robin">Round Robin</option>
-              </HTMLSelect>
-            </FormGroup>
-
-            <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#f5f8fa', borderRadius: '4px', fontSize: '11px', color: '#5c7080' }}>
-              <strong>ℹ️ Info:</strong> Each service booth gets a random service time between {serviceTimeMin}-{serviceTimeMax} minutes per car.
-            </div>
-          </Collapse>
-        </Card>
-
-        {/* Physics Configuration */}
-        <Card style={{ marginBottom: '10px' }}>
-          <div
-            style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-            onClick={() => setShowPhysicsConfig(!showPhysicsConfig)}
-          >
-            <h3 style={{ margin: 0 }}>Physics & Behavior</h3>
-            <span style={{ fontSize: '20px' }}>{showPhysicsConfig ? '▲' : '▼'}</span>
-          </div>
-
-          <Collapse isOpen={showPhysicsConfig}>
             <div style={{ marginTop: '10px' }}>
-              <FormGroup label="Speed Range (mph)" inline>
-                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                  <NumericInput
-                    value={Math.round(physicsConfig.min_speed_mps * 2.237)}
-                    onValueChange={(val) =>
-                      setPhysicsConfig({ ...physicsConfig, min_speed_mps: val / 2.237 })
-                    }
-                    min={20}
-                    max={35}
-                    stepSize={1}
-                    style={{ width: '60px' }}
-                    disabled={isRunning}
-                    placeholder="Min"
-                  />
-                  <span>-</span>
-                  <NumericInput
-                    value={Math.round(physicsConfig.max_speed_mps * 2.237)}
-                    onValueChange={(val) =>
-                      setPhysicsConfig({ ...physicsConfig, max_speed_mps: val / 2.237 })
-                    }
-                    min={25}
-                    max={40}
-                    stepSize={1}
-                    style={{ width: '60px' }}
-                    disabled={isRunning}
-                    placeholder="Max"
-                  />
-                </div>
-              </FormGroup>
+              <Button
+                minimal
+                small
+                icon={showPaths ? 'eye-open' : 'eye-off'}
+                onClick={() => setShowPaths(!showPaths)}
+              >
+                {showPaths ? 'Hide' : 'Show'} Queue Path
+              </Button>
+            </div>
 
-              <FormGroup label="Safe Distance (meters)" inline>
-                <NumericInput
-                  value={physicsConfig.safe_distance_meters}
-                  onValueChange={(val) =>
-                    setPhysicsConfig({ ...physicsConfig, safe_distance_meters: val })
-                  }
-                  min={2}
-                  max={10}
-                  stepSize={0.5}
-                  style={{ width: '80px' }}
-                  disabled={isRunning}
-                />
-              </FormGroup>
-
-              <FormGroup label="Acceleration (m/s²)" inline>
-                <NumericInput
-                  value={physicsConfig.max_acceleration}
-                  onValueChange={(val) =>
-                    setPhysicsConfig({ ...physicsConfig, max_acceleration: val })
-                  }
-                  min={0.3}
-                  max={2.0}
-                  stepSize={0.05}
-                  minorStepSize={0.01}
-                  style={{ width: '80px' }}
-                  disabled={isRunning}
-                />
-              </FormGroup>
-
-              <FormGroup label="Deceleration (m/s²)" inline>
-                <NumericInput
-                  value={physicsConfig.max_deceleration}
-                  onValueChange={(val) =>
-                    setPhysicsConfig({ ...physicsConfig, max_deceleration: val })
-                  }
-                  min={0.5}
-                  max={3.0}
-                  stepSize={0.05}
-                  minorStepSize={0.01}
-                  style={{ width: '80px' }}
-                  disabled={isRunning}
-                />
-              </FormGroup>
-
-              <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#f5f8fa', borderRadius: '4px', fontSize: '11px', color: '#5c7080' }}>
-                <strong>ℹ️ Physics:</strong> Higher acceleration = more aggressive driving. Safe distance controls spacing between cars in queue.
-              </div>
+            <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#e8f4f8', borderRadius: '4px', fontSize: '11px', color: '#5c7080' }}>
+              <strong>ℹ️ New System:</strong> Cars spawn in {selectedDirection === 'mx2usa' ? 'Mexico' : 'USA'},
+              take unique paths, and join the queue at the border.
             </div>
           </Collapse>
         </Card>
-
-        {/* Service Node Management */}
-        {isRunning && simulationData && (
-          <Card style={{ marginTop: '10px', backgroundColor: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
-            <div
-              style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-              onClick={() => setShowServiceNodes(!showServiceNodes)}
-            >
-              <h3 style={{ margin: 0 }}>⚙️ Service Rates</h3>
-              <span style={{ fontSize: '20px' }}>{showServiceNodes ? '▲' : '▼'}</span>
-            </div>
-
-            <Collapse isOpen={showServiceNodes}>
-              <div style={{ marginTop: '10px', maxHeight: '350px', overflowY: 'auto' }}>
-                {Array.from({ length: borderConfig.num_queues }).map((_, queueIdx) => {
-                  const queueNodes = simulationData.service_nodes?.filter(
-                    (n: any) => n.queue_id === queueIdx
-                  ) || [];
-
-                  return (
-                    <div key={queueIdx} style={{ marginBottom: '12px', padding: '8px', backgroundColor: '#f5f8fa', borderRadius: '3px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 'bold', marginBottom: '6px', color: '#5c7080' }}>
-                        Queue {queueIdx} ({queueNodes.length} node{queueNodes.length !== 1 ? 's' : ''})
-                      </div>
-
-                      {queueNodes.length === 0 ? (
-                        <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic' }}>No nodes</div>
-                      ) : (
-                        queueNodes.map((node: any) => (
-                          <div
-                            key={node.node_id}
-                            style={{
-                              padding: '6px',
-                              marginBottom: '4px',
-                              backgroundColor: '#ffffff',
-                              border: '1px solid #e0e0e0',
-                              borderRadius: '3px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: '8px',
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: '60px' }}>
-                              <span style={{ fontSize: '10px', fontWeight: '500', color: '#394b59' }}>{node.node_id}</span>
-                              <Tag intent={node.is_busy ? 'success' : 'none'} minimal style={{ fontSize: '9px', padding: '2px 6px' }}>
-                                {node.is_busy ? 'BUSY' : 'IDLE'}
-                              </Tag>
-                            </div>
-
-                            <NumericInput
-                              value={node.service_rate}
-                              onValueChange={async (val) => {
-                                try {
-                                  await api.updateServiceNode(simulationId!, node.node_id, {
-                                    service_rate: val,
-                                    service_time_variation: 0.2,
-                                  });
-                                } catch (err) {
-                                  console.error('Failed to update node:', err);
-                                }
-                              }}
-                              min={0.1}
-                              max={2.0}
-                              stepSize={0.05}
-                              minorStepSize={0.01}
-                              style={{ width: '90px' }}
-                              small
-                            />
-
-                            <div style={{ fontSize: '9px', color: '#738694', minWidth: '70px', textAlign: 'right' }}>
-                              ~{(1/node.service_rate).toFixed(1)} min/car
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div style={{ marginTop: '8px', padding: '6px', backgroundColor: '#f5f8fa', borderRadius: '3px', fontSize: '10px', color: '#5c7080' }}>
-                <strong>💡</strong> Adjust rates in real-time. Lower = slower service.
-              </div>
-            </Collapse>
-          </Card>
-        )}
       </div>
 
-      {/* Floating Metrics Panel - Top Right (below nav controls) */}
+      {/* Floating Metrics Panel - Top Right */}
       <div
         style={{
           position: 'absolute',
@@ -771,9 +606,6 @@ const FullscreenDashboard: React.FC = () => {
                     <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#106ba3', fontFamily: 'monospace' }}>
                       {formatSimTime(simulationData.metrics.simulation_time)}
                     </div>
-                    <div style={{ fontSize: '10px', color: '#5c7080', marginTop: '4px' }}>
-                      {simulationData.metrics.simulation_time >= 3600 ? '(hours:minutes:seconds)' : '(minutes:seconds)'}
-                    </div>
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -798,11 +630,6 @@ const FullscreenDashboard: React.FC = () => {
                       ({(simulationData.metrics.average_wait_time / 60).toFixed(2)} min)
                     </div>
                   )}
-                  {(simulationData.metrics.average_wait_time === null || simulationData.metrics.average_wait_time === undefined) && (
-                    <div style={{ fontSize: '10px', color: '#999', fontStyle: 'italic' }}>
-                      Waiting for cars to complete service...
-                    </div>
-                  )}
                 </div>
               </div>
             ) : (
@@ -814,96 +641,13 @@ const FullscreenDashboard: React.FC = () => {
         </Card>
       </div>
 
-      {/* Floating Car List Panel - Bottom Right */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '20px',
-          right: '20px',
-          width: '300px',
-          maxHeight: '400px',
-          zIndex: 1000,
-        }}
-      >
-        <Card
-          style={{
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            backdropFilter: 'blur(10px)',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h3 style={{ margin: 0 }}>
-              🚙 Cars ({simulationData?.cars.length || 0})
-            </h3>
-            <Button
-              minimal
-              small
-              icon={showCarList ? 'chevron-down' : 'chevron-up'}
-              onClick={() => setShowCarList(!showCarList)}
-            />
-          </div>
-
-          <Collapse isOpen={showCarList}>
-            <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-              {simulationData?.cars.length === 0 ? (
-                <Callout intent="none" icon="endorsed">
-                  No active cars
-                  {simulationData.metrics.total_completions > 0 &&
-                    ` (${simulationData.metrics.total_completions} completed)`}
-                </Callout>
-              ) : (
-                simulationData?.cars.map((car) => (
-                  <div
-                    key={car.id}
-                    onClick={() => setSelectedCarId(car.id)}
-                    style={{
-                      padding: '8px',
-                      marginBottom: '6px',
-                      backgroundColor:
-                        selectedCarId === car.id ? '#e1f5fe' : '#f8f9fa',
-                      border:
-                        selectedCarId === car.id
-                          ? '2px solid #2196f3'
-                          : '1px solid #dee2e6',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                    }}
-                  >
-                    <div style={{ fontWeight: 'bold', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Car {car.id}</span>
-                      <div
-                        style={{
-                          width: '10px',
-                          height: '10px',
-                          borderRadius: '50%',
-                          backgroundColor: getCarColor(car.status),
-                          marginTop: '4px'
-                        }}
-                      />
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#666' }}>
-                      <div>{car.status}</div>
-                      {car.velocity !== undefined && (
-                        <div>{car.velocity.toFixed(1)} m/s</div>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </Collapse>
-        </Card>
-      </div>
-
-      {/* Selected Car Details - Bottom Left */}
+      {/* Compact Car Info Panel - Bottom Right */}
       {selectedCarId && simulationData && (
         <div
           style={{
             position: 'absolute',
             bottom: '20px',
-            left: '20px',
+            right: '20px',
             width: '280px',
             zIndex: 1000,
           }}
@@ -913,52 +657,64 @@ const FullscreenDashboard: React.FC = () => {
               backgroundColor: 'rgba(255, 255, 255, 0.95)',
               backdropFilter: 'blur(10px)',
               boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              padding: '12px',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <h3 style={{ margin: 0 }}>Car {selectedCarId}</h3>
-              <Button
-                minimal
-                small
-                icon="cross"
-                onClick={() => setSelectedCarId(null)}
-              />
-            </div>
             {(() => {
-              const car = simulationData.cars.find((c) => c.id === selectedCarId);
-              if (!car) return <div>Car not found</div>;
+              const car = simulationData.cars.find(c => c.id === selectedCarId);
+              if (!car) return null;
+
               return (
-                <div style={{ fontSize: '13px' }}>
-                  <div style={{ marginBottom: '6px' }}>
-                    <strong>Status:</strong>{' '}
-                    <Tag
-                      style={{
-                        backgroundColor: getCarColor(car.status),
-                        color: 'white',
-                      }}
-                    >
-                      {car.status}
-                    </Tag>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <h4 style={{ margin: 0, fontSize: '14px' }}>Car {car.id}</h4>
+                    <Button
+                      minimal
+                      small
+                      icon="cross"
+                      onClick={() => setSelectedCarId(null)}
+                    />
                   </div>
-                  <div style={{ marginBottom: '6px' }}>
-                    <strong>Position:</strong> [{car.position[1].toFixed(6)},{' '}
-                    {car.position[0].toFixed(6)}]
+                  <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <strong>Status:</strong>
+                      <Tag
+                        minimal
+                        style={{
+                          backgroundColor: getCarColor(car.status),
+                          color: 'white',
+                          fontSize: '10px',
+                          padding: '2px 6px'
+                        }}
+                      >
+                        {car.status.toUpperCase()}
+                      </Tag>
+                    </div>
+                    {car.velocity !== undefined && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <strong>Speed:</strong>
+                        <span>{car.velocity.toFixed(2)} m/s ({(car.velocity * 3.6).toFixed(1)} km/h)</span>
+                      </div>
+                    )}
+                    {car.acceleration !== undefined && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <strong>Acceleration:</strong>
+                        <span>{car.acceleration.toFixed(3)} m/s²</span>
+                      </div>
+                    )}
+                    {car.queue_id !== undefined && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <strong>Queue:</strong>
+                        <span>#{car.queue_id}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e0e0e0' }}>
+                      <strong>Position:</strong>
+                      <span style={{ fontSize: '10px', fontFamily: 'monospace' }}>
+                        {car.position[1].toFixed(5)}, {car.position[0].toFixed(5)}
+                      </span>
+                    </div>
                   </div>
-                  {car.velocity !== undefined && (
-                    <div style={{ marginBottom: '6px' }}>
-                      <strong>Velocity:</strong> {car.velocity.toFixed(2)} m/s
-                    </div>
-                  )}
-                  {car.acceleration !== undefined && (
-                    <div style={{ marginBottom: '6px' }}>
-                      <strong>Acceleration:</strong> {car.acceleration.toFixed(2)} m/s²
-                    </div>
-                  )}
-                  {car.queue_id !== undefined && car.queue_id !== null && (
-                    <div style={{ marginBottom: '6px' }}>
-                      <strong>Queue:</strong> {car.queue_id}
-                    </div>
-                  )}
                 </div>
               );
             })()}
@@ -984,7 +740,7 @@ const FullscreenDashboard: React.FC = () => {
             padding: '10px 20px',
           }}
         >
-          <div style={{ display: 'flex', gap: '15px', fontSize: '12px' }}>
+          <div style={{ display: 'flex', gap: '15px', fontSize: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#007bff' }} />
               <span>Arriving</span>
@@ -998,8 +754,12 @@ const FullscreenDashboard: React.FC = () => {
               <span>Serving</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <div style={{ width: '4px', height: '15px', backgroundColor: '#ff0000' }} />
-              <span>Border Path</span>
+              <div style={{ width: '4px', height: '15px', backgroundColor: '#ff6b6b', opacity: 0.4 }} />
+              <span>Queue Zone</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <div style={{ width: '4px', height: '15px', backgroundColor: '#888888', opacity: 0.3 }} />
+              <span>Car Paths</span>
             </div>
           </div>
         </Card>

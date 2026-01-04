@@ -1,4 +1,5 @@
 import numpy as np
+from shapely.geometry import Point
 from .car import Car
 from .queuing.mm1_queue import MM1Queue
 from .models import QueueState, QueueStats
@@ -49,7 +50,7 @@ class CarQueue:
         self.serving_car = None  # Car currently being served
         self.service_nodes = []  # Service nodes assigned to this queue
 
-    def add_car(self, car_id=None, sampling_rate=10, phone_config=None):
+    def add_car(self, car_id=None, sampling_rate=10, phone_config=None, car_waitline=None):
         """
         Add a new car to the queue.
 
@@ -57,6 +58,7 @@ class CarQueue:
             car_id: Unique ID for the car (if None, uses internal counter)
             sampling_rate: Telemetry sampling rate
             phone_config: Phone configuration for telemetry
+            car_waitline: Optional unique waitline for this car (for dynamic paths)
 
         Returns:
             Car: The newly created car object
@@ -75,7 +77,11 @@ class CarQueue:
         # Position max = south end of linestring (booth)
         # They will travel toward position max (increasing position toward booth)
         initial_position = 0.0  # Start at beginning of linestring (north)
-        car = Car(car_id, sampling_rate, phone_config, initial_position=initial_position)
+
+        # Use car-specific waitline if provided, otherwise use queue's shared waitline
+        waitline_for_car = car_waitline if car_waitline is not None else self.waitline
+
+        car = Car(car_id, sampling_rate, phone_config, initial_position=initial_position, waitline=waitline_for_car)
 
         # Set initial status to approaching and record arrival time
         current_time = self.mm1_queue.current_time if self.mm1_queue else 0
@@ -100,7 +106,8 @@ class CarQueue:
 
         # Initialize telemetry generator if phone config provided
         if phone_config:
-            car.set_telemetry_generator(self.waitline)
+            # Car will use its own waitline (either custom or shared)
+            car.set_telemetry_generator()
 
         # Add to position tracking
         self.car_positions.append(car_id)
@@ -136,6 +143,116 @@ class CarQueue:
             # Clear serving car if this was it
             if self.serving_car and self.serving_car.car_id == car_id:
                 self.serving_car = None
+
+    def get_car_coordinates(self, car):
+        """
+        Get the UTM coordinates of a car at its current position.
+
+        Args:
+            car: Car object
+
+        Returns:
+            tuple: (x_utm, y_utm) in meters or None if unavailable
+        """
+        if not hasattr(car, 'waitline') or car.waitline is None:
+            return None
+
+        try:
+            # Get point on path at current position (lat/lon)
+            point = car.waitline.interpolate(car.position)
+            if point and hasattr(point, 'x') and hasattr(point, 'y'):
+                # Convert to UTM using the waitline's projector
+                if hasattr(car.waitline, 'projector'):
+                    x_utm, y_utm = car.waitline.projector(point.x, point.y)
+                    return (x_utm, y_utm)
+                else:
+                    # Fallback to lat/lon if no projector
+                    return (point.x, point.y)
+        except Exception:
+            pass
+
+        return None
+
+    def calculate_geographic_distance(self, car1, car2):
+        """
+        Calculate the distance between two cars in meters using UTM coordinates.
+
+        Args:
+            car1: First car
+            car2: Second car
+
+        Returns:
+            float: Distance in meters, or None if coordinates unavailable
+        """
+        coords1 = self.get_car_coordinates(car1)
+        coords2 = self.get_car_coordinates(car2)
+
+        if coords1 is None or coords2 is None:
+            return None
+
+        # Calculate Euclidean distance in UTM (already in meters)
+        x_diff = coords2[0] - coords1[0]
+        y_diff = coords2[1] - coords1[1]
+
+        distance = np.sqrt(x_diff ** 2 + y_diff ** 2)
+
+        return distance
+
+    def get_booth_coordinates(self, car_waitline):
+        """
+        Get the booth coordinates in UTM from a car's waitline.
+
+        Args:
+            car_waitline: Car's waitline object
+
+        Returns:
+            tuple: (x_utm, y_utm) of booth in meters, or None if unavailable
+        """
+        if not car_waitline or not hasattr(car_waitline, 'end_point'):
+            return None
+
+        try:
+            end_point = car_waitline.end_point
+            if isinstance(end_point, (list, tuple)) and len(end_point) == 2:
+                # end_point is in lat/lon, convert to UTM
+                if hasattr(car_waitline, 'projector'):
+                    x_utm, y_utm = car_waitline.projector(end_point[0], end_point[1])
+                    return (x_utm, y_utm)
+                else:
+                    # Fallback to lat/lon
+                    return tuple(end_point)
+        except Exception:
+            pass
+
+        return None
+
+    def calculate_distance_to_booth(self, car):
+        """
+        Calculate the distance from a car to the booth in meters using UTM.
+
+        Args:
+            car: Car object
+
+        Returns:
+            float: Distance in meters, or None if unavailable
+        """
+        car_coords = self.get_car_coordinates(car)
+        if car_coords is None:
+            return None
+
+        car_waitline = car.waitline if hasattr(car, 'waitline') and car.waitline else self.waitline
+        booth_coords = self.get_booth_coordinates(car_waitline)
+
+        if booth_coords is None:
+            return None
+
+        # Calculate Euclidean distance in UTM (already in meters)
+        x_diff = booth_coords[0] - car_coords[0]
+        y_diff = booth_coords[1] - car_coords[1]
+
+        distance = np.sqrt(x_diff ** 2 + y_diff ** 2)
+
+        return distance
 
     def get_control_point_speed_limit(self, position, traffic_control_points, default_speed):
         """
@@ -196,25 +313,76 @@ class CarQueue:
         # Get current simulation time for statistics
         current_time = self.mm1_queue.current_time if self.mm1_queue else 0
 
+        # Debug: Print car state summary every 100 updates
+        if not hasattr(self, '_update_count'):
+            self._update_count = 0
+        self._update_count += 1
+
+        if self._update_count % 100 == 0:
+            states = {}
+            for car in self.cars.values():
+                states[car.status] = states.get(car.status, 0) + 1
+            print(f"\n=== Update {self._update_count} | Cars: {states} ===")
+
+            # Test geographic distance calculation for first car
+            if len(self.cars) > 0:
+                test_car = list(self.cars.values())[0]
+                coords = self.get_car_coordinates(test_car)
+                dist_to_booth = self.calculate_distance_to_booth(test_car)
+
+                coords_str = f"{coords[0]:.1f},{coords[1]:.1f}" if coords else 'FAIL'
+                dist_str = f"{dist_to_booth:.1f}m" if dist_to_booth is not None else 'FAIL'
+
+                print(f"TEST Car {test_car.car_id}: coords={coords_str}, dist_to_booth={dist_str}")
+
+                # Debug why it's failing
+                if coords is None:
+                    print(f"  → coords FAILED: waitline={test_car.waitline is not None}, "
+                          f"position={test_car.position:.1f}")
+                    if test_car.waitline:
+                        try:
+                            point = test_car.waitline.interpolate(test_car.position)
+                            print(f"  → interpolate returned: {point}")
+                            if point:
+                                print(f"  → point.x={point.x}, point.y={point.y}")
+                                print(f"  → has projector: {hasattr(test_car.waitline, 'projector')}")
+                        except Exception as e:
+                            print(f"  → interpolate ERROR: {e}")
+
         # Sort cars by position (front of queue first - HIGHEST position number)
         # Position increases as cars approach the booth (toward waitline_length)
-        # Secondary sort by car_id to maintain arrival order (FIFO) when positions are similar
-        sorted_cars = sorted(self.cars.values(), key=lambda c: (-c.position, c.car_id))
+        # Only sort by position - cars that arrive first physically will naturally be ahead
+        sorted_cars = sorted(self.cars.values(), key=lambda c: -c.position)
 
-        # Get traffic control points from waitline
-        traffic_control_points = self.waitline.traffic_control_points if self.waitline else []
+        # Get traffic control points from shared waitline (for cars without their own)
+        shared_traffic_control_points = self.waitline.traffic_control_points if self.waitline else []
+        shared_booth_position = self.waitline.waitline_length if self.waitline else 1000.0
 
-        # Find booth position from traffic control points
-        # The journey ends at the booth, not at the end of the linestring
-        booth_position = self.waitline.waitline_length if self.waitline else 1000.0
-        if traffic_control_points:
-            for cp in traffic_control_points:
+        # Find booth position from shared traffic control points
+        if shared_traffic_control_points:
+            for cp in shared_traffic_control_points:
                 if cp['type'] == 'booth':
-                    booth_position = cp['position_meters']
+                    shared_booth_position = cp['position_meters']
                     break
 
         # Update each car's target velocity based on position in queue
         for i, car in enumerate(sorted_cars):
+            # Get car-specific path info (use car's own waitline if available)
+            car_waitline = car.waitline if hasattr(car, 'waitline') and car.waitline else self.waitline
+            car_traffic_control_points = (
+                car_waitline.traffic_control_points if car_waitline and hasattr(car_waitline, 'traffic_control_points')
+                else shared_traffic_control_points
+            )
+            car_path_length = car_waitline.waitline_length if car_waitline else shared_booth_position
+
+            # Find booth position for this specific car
+            booth_position = car_path_length
+            if car_traffic_control_points:
+                for cp in car_traffic_control_points:
+                    if cp['type'] == 'booth':
+                        booth_position = cp['position_meters']
+                        break
+
             # Assign each car a preferred speed with variance (27-33 mph range)
             if not hasattr(car, 'preferred_speed'):
                 speed_variance = np.random.uniform(0.9, 1.1)
@@ -222,85 +390,102 @@ class CarQueue:
 
             # Handle approaching cars (moving toward booth)
             if car.status == "approaching":
-                distance_to_booth = booth_position - car.position
+                # Use geographic distance to booth instead of path position
+                geo_distance_to_booth = self.calculate_distance_to_booth(car)
+                if geo_distance_to_booth is None:
+                    # Fallback to path-based distance if geographic distance unavailable
+                    geo_distance_to_booth = booth_position - car.position
 
-                # Check if there's a car ahead
-                should_queue = False
-                if i > 0:
-                    front_car = sorted_cars[i - 1]  # Car ahead (higher position)
-                    distance_to_front = front_car.position - car.position - front_car.length
+                # Find the closest car geographically (regardless of distance to booth)
+                # This prevents piling up when multiple cars are near booth
+                car_ahead = None
+                min_distance = float('inf')
+                detection_range = 20.0  # Only check cars within 20m
 
-                    # Join queue if car ahead is queued/serving AND we're getting close
-                    # Use a larger detection distance to form realistic queue behavior
-                    if front_car.status in ["queued", "serving"]:
-                        # Join the queue when within reasonable following distance
-                        # This allows the queue to grow naturally from the back
-                        queue_join_distance = self.safe_distance * 3  # More realistic queue detection
-                        if distance_to_front < queue_join_distance:
-                            should_queue = True
-                    # Also join if car ahead just completed and is exiting but we're very close
-                    elif front_car.status == "completed" and distance_to_front < self.safe_distance * 1.5:
-                        should_queue = True
-                else:
-                    # No car ahead - check if we're close enough to booth to queue
-                    if distance_to_booth < self.safe_distance * 2:
-                        should_queue = True
+                for other_car in sorted_cars:
+                    if other_car.car_id == car.car_id:
+                        continue
 
-                if should_queue:
-                    # Transition to queued
+                    # Calculate GEOGRAPHIC distance between cars
+                    geographic_distance = self.calculate_geographic_distance(car, other_car)
+
+                    if geographic_distance is not None and geographic_distance < detection_range:
+                        # Get other car's distance to booth
+                        other_geo_distance_to_booth = self.calculate_distance_to_booth(other_car)
+                        if other_geo_distance_to_booth is None:
+                            continue
+
+                        # Only consider cars that are closer to booth OR very close geographically
+                        is_ahead = (other_geo_distance_to_booth < geo_distance_to_booth) or (geographic_distance < self.safe_distance * 2)
+
+                        if is_ahead:
+                            # Subtract other car's length to get gap
+                            distance_between = geographic_distance - other_car.length
+
+                            # Find the closest car
+                            if abs(distance_between) < abs(min_distance):
+                                min_distance = distance_between
+                                car_ahead = other_car
+
+                # Get traffic control speed limit
+                control_speed_limit = self.get_control_point_speed_limit(
+                    car.position, car_traffic_control_points, car.preferred_speed
+                )
+
+                # CRITICAL: Only transition to queued when NEAR BOOTH and BLOCKED
+                # Check if we should transition to queued state (using geographic distance)
+                should_transition_to_queued = False
+                if geo_distance_to_booth < 100:  # Must be in booth area (100m)
+                    if car_ahead is not None and min_distance < self.safe_distance * 1.5:
+                        # Blocked by car ahead in booth area - this is a queue
+                        should_transition_to_queued = True
+                    elif geo_distance_to_booth < 5 and car_ahead is None:
+                        # Reached booth with no car ahead - about to be served
+                        should_transition_to_queued = True
+
+                if should_transition_to_queued:
                     current_time = self.mm1_queue.current_time if self.mm1_queue else 0
                     car.set_status("queued", current_time)
-                    # Don't set velocity here - let the queued car logic below handle movement
+                    if car.car_id <= 10:
+                        print(f">>> Car {car.car_id} ENTERED QUEUED state at {geo_distance_to_booth:.1f}m from booth")
+                    # Will handle movement in queued state below
                 else:
-                    # Still approaching - apply traffic control and car-following behavior
-                    # Apply traffic control point speed limits
-                    control_speed_limit = self.get_control_point_speed_limit(
-                        car.position, traffic_control_points, car.preferred_speed
-                    )
-
-                    # Check if there's a car ahead (car in front has higher position, which is at lower index)
-                    if i > 0:
-                        front_car = sorted_cars[i - 1]  # Car ahead (higher position)
-                        distance_to_front = front_car.position - car.position - front_car.length
-
-                        # Special handling if car ahead is queued/serving - slow down earlier
-                        if front_car.status in ["queued", "serving"]:
-                            # Approaching a stopped or slow-moving queue
-                            if distance_to_front < self.safe_distance * 5:
-                                # Very close to queue - crawl at queue speed
-                                target_velocity = car.queue_velocity
-                            elif distance_to_front < self.safe_distance * 10:
-                                # Getting close - slow down significantly
-                                blend = (distance_to_front - self.safe_distance * 5) / (self.safe_distance * 5)
-                                target_velocity = car.queue_velocity + (control_speed_limit - car.queue_velocity) * blend
-                            else:
-                                # Still far - use normal speed
-                                target_velocity = control_speed_limit
+                    # Still approaching - handle car following and booth approach
+                    # Detect cars from further away to prevent piling up
+                    if car_ahead is not None and min_distance < self.safe_distance * 5:
+                        # Car ahead detected - maintain safe distance
+                        if min_distance <= 0:
+                            # Overlapping! Stop immediately
+                            target_velocity = 0.0
+                        elif min_distance < self.safe_distance:
+                            # Too close - STOP completely
+                            target_velocity = 0.0
+                        elif min_distance < self.safe_distance * 1.5:
+                            # Very close - slow crawl
+                            target_velocity = car.queue_velocity * 0.3
+                        elif min_distance < self.safe_distance * 2:
+                            # Close - slow down significantly
+                            target_velocity = car.queue_velocity * 0.6
+                        elif min_distance < self.safe_distance * 3:
+                            # Moderate distance - match car ahead speed
+                            target_velocity = min(car_ahead.velocity, control_speed_limit * 0.7)
                         else:
-                            # Car ahead is also approaching - normal car-following
-                            if distance_to_front < self.safe_distance * 2:
-                                # Getting close - slow down to match or below front car
-                                target_velocity = min(front_car.velocity, control_speed_limit * 0.7)
-                            elif distance_to_front < self.safe_distance * 3:
-                                # Moderate distance - match front car speed but respect control points
-                                target_velocity = min(control_speed_limit, front_car.velocity)
-                            else:
-                                # Safe distance - use control point speed limit or slow down near booth
-                                if distance_to_booth < 50:
-                                    target_velocity = max(car.queue_velocity, control_speed_limit * (distance_to_booth / 50))
-                                else:
-                                    target_velocity = control_speed_limit
+                            # Approaching car ahead - slow down
+                            target_velocity = min(car_ahead.velocity * 1.1, control_speed_limit * 0.85)
                     else:
-                        # No car ahead (first car approaching), use control point limits and slow near booth
-                        if distance_to_booth < 50:  # Start slowing 50m from booth
-                            # Gradual deceleration
-                            target_velocity = max(car.queue_velocity, control_speed_limit * (distance_to_booth / 50))
+                        # No car ahead or far enough - normal driving
+                        if geo_distance_to_booth < 50:
+                            # Approaching booth - slow down
+                            slowdown_factor = geo_distance_to_booth / 50.0
+                            target_velocity = max(car.queue_velocity, control_speed_limit * slowdown_factor)
+                        elif geo_distance_to_booth < 5:
+                            # Very close to booth - stop
+                            target_velocity = 0.0
                         else:
                             target_velocity = control_speed_limit
 
-                # Use physics to update (gradual acceleration/deceleration)
-                car.update_physics(target_velocity, dt)
-                car.update_statistics(current_time, dt)
+                    car.update_physics(target_velocity, dt)
+                    car.update_statistics(current_time, dt)
 
             elif car.status == "serving":
                 # Car being served - stationary at booth
@@ -310,75 +495,101 @@ class CarQueue:
                 car.update_statistics(current_time, dt)
 
             elif car.status == "queued":
-                # Car is in queue - handle based on position
-                if i == 0:
-                    # First car in queue waiting to be served
-                    distance_to_booth = booth_position - car.position
-                    if distance_to_booth > self.safe_distance * 0.5:
-                        # Move up to booth position
+                # GAME-LIKE APPROACH: Simple collision detection
+                # Check ALL other cars, find closest one that's blocking
+
+                geo_distance_to_booth = self.calculate_distance_to_booth(car)
+                if geo_distance_to_booth is None:
+                    geo_distance_to_booth = booth_position - car.position
+
+                # Find the closest blocking car (game-like collision detection)
+                car_ahead = None
+                min_distance = float('inf')
+                detection_range = 15.0  # meters
+
+                for other_car in self.cars.values():
+                    if other_car.car_id == car.car_id:
+                        continue
+
+                    # Calculate geographic distance
+                    geo_dist = self.calculate_geographic_distance(car, other_car)
+                    if geo_dist is None or geo_dist > detection_range:
+                        continue  # Too far away
+
+                    # Calculate other car's distance to booth
+                    other_dist_to_booth = self.calculate_distance_to_booth(other_car)
+                    if other_dist_to_booth is None:
+                        continue
+
+                    # Car is "blocking" if it's:
+                    # 1. Closer to booth than me (ahead)
+                    # 2. Within detection range
+                    if other_dist_to_booth < geo_distance_to_booth:
+                        # This car is ahead - calculate actual gap
+                        gap = geo_dist - other_car.length
+
+                        # Is this the closest blocking car?
+                        if gap < min_distance:
+                            min_distance = gap
+                            car_ahead = other_car
+
+                # Debug logging - print for ALL queued cars
+                if car.car_id <= 10:  # First 10 cars
+                    gap_str = f"{min_distance:.1f}m" if car_ahead and min_distance != float('inf') else 'N/A'
+                    print(f"[QUEUED] Car {car.car_id}: booth_dist={geo_distance_to_booth:.1f}m, "
+                          f"car_ahead={car_ahead.car_id if car_ahead else 'NONE'}, "
+                          f"gap={gap_str}, vel={car.velocity:.2f}m/s")
+
+                if car_ahead is None:
+                    # No car ahead - move toward booth (use geographic distance)
+                    # CRITICAL: Only approach if distance > safe_distance
+                    if geo_distance_to_booth > self.safe_distance * 2:
+                        target_velocity = car.queue_velocity
+                    elif geo_distance_to_booth > self.safe_distance:
+                        # Approaching booth - slow down
                         target_velocity = car.queue_velocity * 0.5
+                    elif geo_distance_to_booth > 1.0:
+                        # Very close - slow crawl to booth
+                        target_velocity = car.queue_velocity * 0.2
                     else:
-                        # Close enough - stop and wait
+                        # At booth - complete stop and wait for service
                         target_velocity = 0.0
-                    car.update_physics(target_velocity, dt)
-                    car.update_statistics(current_time, dt)
+                        # Snap to booth position to prevent drift
+                        car.position = min(car.position, booth_position)
                 else:
-                    # Following cars in queue - maintain proper spacing behind car ahead
-                    front_car = sorted_cars[i - 1]
-
-                    # Calculate ideal position (safe_distance behind front car)
-                    ideal_position = front_car.position - front_car.length - self.safe_distance
-                    current_position = car.position
-                    position_error = ideal_position - current_position
-
-                    # CRITICAL: Never allow a car to pass a car that arrived before it
-                    # Check if front car has lower car_id (arrived first)
-                    if front_car.car_id < car.car_id:
-                        # Front car arrived first - ensure we never pass it
-                        max_allowed_position = front_car.position - front_car.length - 0.5
-                        if current_position > max_allowed_position:
-                            # Too close - immediately set position behind front car
-                            car.position = max_allowed_position
-                            target_velocity = 0.0
-                        elif position_error < -0.5:
-                            # Too close - push back to ideal spacing
-                            car.position = max(0, ideal_position)
-                            target_velocity = 0.0
-                        # If too far back, move forward
-                        elif position_error > self.safe_distance:
-                            # Large gap - move forward at queue speed
-                            target_velocity = car.queue_velocity
-                        elif position_error > 0.5:
-                            # Small gap - creep forward slowly
-                            target_velocity = car.queue_velocity * 0.5
-                        else:
-                            # At ideal spacing - maintain position
-                            target_velocity = 0.0
+                    # Follow car ahead - maintain safe distance
+                    # CRITICAL: Stop if ANY car is ahead and within safe distance
+                    if min_distance <= 0:
+                        # Overlapping! Stop immediately and don't move
+                        target_velocity = 0.0
+                    elif min_distance < self.safe_distance:
+                        # Too close - STOP completely
+                        target_velocity = 0.0
+                    elif min_distance < self.safe_distance * 1.5:
+                        # Approaching safe distance - very slow crawl
+                        target_velocity = car.queue_velocity * 0.2
+                    elif min_distance < self.safe_distance * 2:
+                        # Good spacing - slow queue speed
+                        target_velocity = car.queue_velocity * 0.5
+                    elif min_distance < self.safe_distance * 3:
+                        # Comfortable distance - normal queue speed
+                        target_velocity = car.queue_velocity
                     else:
-                        # This shouldn't happen if sorting is correct, but handle gracefully
-                        # If somehow a car that arrived later is ahead, just maintain spacing
-                        if position_error < -0.5:
-                            car.position = max(0, ideal_position)
-                            target_velocity = 0.0
-                        elif position_error > self.safe_distance:
-                            target_velocity = car.queue_velocity
-                        elif position_error > 0.5:
-                            target_velocity = car.queue_velocity * 0.5
-                        else:
-                            target_velocity = 0.0
+                        # Large gap - move forward faster (but not too fast)
+                        target_velocity = min(car.queue_velocity * 1.2, car_ahead.velocity)
 
-                    car.update_physics(target_velocity, dt)
-                    car.update_statistics(current_time, dt)
+                car.update_physics(target_velocity, dt)
+                car.update_statistics(current_time, dt)
 
             elif car.status == "completed":
                 # Car has finished service, now driving away from booth
-                # Accelerate to exit speed
-                target_velocity = car.max_velocity
+                # Use moderate exit speed to clear booth quickly but not excessively
+                target_velocity = car.queue_velocity * 2.0  # 2x queue speed ≈ 6 mph
                 car.update_physics(target_velocity, dt)
                 car.update_statistics(current_time, dt)
 
         # Remove completed cars that have driven far enough past booth
-        removal_distance = 20.0  # Remove cars 20m past booth
+        removal_distance = 5.0  # Remove cars 5m past booth (just enough to clear)
         cars_to_remove = []
         for car in self.cars.values():
             if car.status == "completed":

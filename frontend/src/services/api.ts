@@ -40,7 +40,15 @@ export interface SimulationRequest {
   simulation_config?: SimulationConfig;
   phone_config?: PhoneConfig;
   physics_config?: PhysicsConfig;
+
+  // New simplified interface
+  crossing_name: string;  // e.g., "paso_del_norte", "bridge_of_the_americas"
+  direction: string;       // "mx2usa" or "usa2mx"
+
+  // Legacy support (optional)
   geojson_path?: string;
+  use_dynamic_paths?: boolean;
+  country_of_origin?: string;
 }
 
 export interface BorderCrossing {
@@ -249,6 +257,20 @@ export const api = {
     }
 
     return response.json();
+  },
+
+  // Get queue geometry for a specific crossing
+  getQueueGeometry: async (crossingName: string): Promise<any> => {
+    // Fetch bounding_boxes.json from backend or construct from API
+    // For now, we'll need to add a backend endpoint or fetch directly
+    const response = await fetch(`/cascabel/paths/bounding_boxes.json`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get queue geometry: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data[crossingName]?.preferred_queue_geometry || null;
   },
 
   // WebSocket URL
