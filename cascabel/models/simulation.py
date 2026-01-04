@@ -141,17 +141,21 @@ class Simulation:
 
         for queue in self.border_crossing.queues:
             for car in queue.cars.values():
-                # Get GPS position along waitline
-                position_point = self.waitline.compute_position_at_distance_from_start(
-                    car.position
-                )
-                if position_point and self.bounds_polygon:
-                    # Constrain position to bounds
-                    position_point = constrain_point_to_bounds(
-                        position_point, self.bounds_polygon
+                # Get the waitline for this specific car (use car's own or fall back to shared)
+                car_waitline = car.waitline if hasattr(car, 'waitline') and car.waitline else self.waitline
+
+                # Get GPS position along car's waitline
+                if car_waitline:
+                    position_point = car_waitline.compute_position_at_distance_from_start(
+                        car.position
                     )
-                if position_point:
-                    self.location_points.append(position_point)
+                    if position_point and self.bounds_polygon:
+                        # Constrain position to bounds
+                        position_point = constrain_point_to_bounds(
+                            position_point, self.bounds_polygon
+                        )
+                    if position_point:
+                        self.location_points.append(position_point)
 
                 # Generate telemetry data for this car
                 if car.telemetry_gen:

@@ -15,11 +15,21 @@ interface RunPanelProps {
   borderConfig: BorderCrossingConfig;
   simulationConfig: SimulationConfig;
   phoneConfig?: PhoneConfig;
+  crossingName?: string;
+  direction?: string;
   onSimulationStart?: (id: string) => void;
   onViewMap?: () => void;
 }
 
-const RunPanel: React.FC<RunPanelProps> = ({ borderConfig, simulationConfig, phoneConfig, onSimulationStart, onViewMap }) => {
+const RunPanel: React.FC<RunPanelProps> = ({
+  borderConfig,
+  simulationConfig,
+  phoneConfig,
+  crossingName = 'paso_del_norte',
+  direction = 'mx2usa',
+  onSimulationStart,
+  onViewMap
+}) => {
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [status, setStatus] = useState<SimulationStatus | null>(null);
   const [isStarting, setIsStarting] = useState(false);
@@ -31,6 +41,8 @@ const RunPanel: React.FC<RunPanelProps> = ({ borderConfig, simulationConfig, pho
     setError(null);
     try {
       const request = {
+        crossing_name: crossingName,
+        direction: direction,
         border_config: borderConfig,
         simulation_config: simulationConfig,
         phone_config: phoneConfig

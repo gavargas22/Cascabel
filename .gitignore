@@ -140,3 +140,5 @@ dmypy.json
 # .agentic-docs - Re-enabled for version control of specs
 # .agentic-docs
 .ipynb_checkpoints
+cache/
+__marimo__

@@ -124,17 +124,23 @@ class BorderCrossing:
     Supports various queue assignment strategies and service configurations.
     """
 
-    def __init__(self, waitline, config, phone_config=None):
+    def __init__(self, waitline, config, phone_config=None, crossing_name=None, graph=None, use_dynamic_paths=False):
         """
         Initialize border crossing.
 
         Args:
-            waitline: WaitLine object defining the path
+            waitline: WaitLine object defining the path (can be shared or None if using dynamic paths)
             config: BorderCrossingConfig object or dict
             phone_config: PhoneConfig object for telemetry generation
+            crossing_name: Name of the border crossing (for dynamic path generation)
+            graph: Optional pre-loaded OSM graph (for dynamic path generation)
+            use_dynamic_paths: If True, generate unique path for each car
         """
         self.waitline = waitline
         self.phone_config = phone_config
+        self.crossing_name = crossing_name
+        self.graph = graph
+        self.use_dynamic_paths = use_dynamic_paths
 
         # Use Pydantic model for configuration
         if isinstance(config, dict):
@@ -201,9 +207,14 @@ class BorderCrossing:
 
             self.queues.append(queue)
 
-    def add_car(self, sampling_rate=10, phone_config=None):
+    def add_car(self, sampling_rate=10, phone_config=None, country="mexico"):
         """
         Add a new car and assign it to a queue.
+
+        Args:
+            sampling_rate: Telemetry sampling rate
+            phone_config: Phone configuration for telemetry
+            country: "mexico" or "usa" - which country the car is coming from
 
         Returns:
             tuple: (Car, queue_index) or (None, None) if no queue available
@@ -218,8 +229,28 @@ class BorderCrossing:
         car_id = self.next_car_id
         self.next_car_id += 1
 
-        # Add car to assigned queue with global ID
-        car = self.queues[queue_index].add_car(car_id, sampling_rate, self.phone_config)
+        # Generate optimized dynamic path for this car if enabled
+        car_waitline = None
+        if self.use_dynamic_paths and self.crossing_name:
+            from cascabel.models.optimized_waitline import OptimizedWaitLine
+            # Get direction from border crossing config
+            direction = getattr(self, 'direction', 'mx2usa')
+            # Create unique path for this car (approach + queue)
+            car_waitline = OptimizedWaitLine(
+                crossing_name=self.crossing_name,
+                direction=direction,
+                graph=self.graph,
+                starting_point=None  # Random point in origin zone
+            )
+
+        # Add car to assigned queue with global ID and optional dynamic path
+        car = self.queues[queue_index].add_car(
+            car_id=car_id,
+            sampling_rate=sampling_rate,
+            phone_config=self.phone_config,
+            car_waitline=car_waitline
+        )
+
         if car:
             self.total_arrivals += 1
             car.queue_id = queue_index
@@ -270,7 +301,10 @@ class BorderCrossing:
 
         # Process arrivals
         while self.current_time >= self.next_arrival_time:
-            self.add_car()
+            # Determine country for dynamic paths (could vary or be random)
+            country = getattr(self, 'default_country', 'mexico')
+            self.add_car(country=country)
+
             # Schedule next arrival with time-varying rate
             hour_of_day = (self.current_time / 3600) % 24
             if 6 <= hour_of_day < 9:  # morning rush
