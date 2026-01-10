@@ -15,6 +15,7 @@ import os
 import json
 import asyncio
 import traceback
+import random
 from pathlib import Path
 
 from cascabel.models.waitline import WaitLine
@@ -39,6 +40,15 @@ class PhysicsConfig(BaseModel):
     max_deceleration: float = 1.25
 
 
+class PhysicsRanges(BaseModel):
+    """Ranges for random selection of physics parameters."""
+    speed_range: List[float] = [12.0, 15.0]  # [min, max] m/s
+    safe_distance_range: List[float] = [2.0, 5.0]  # [min, max] meters
+    acceleration_range: List[float] = [0.5, 1.0]  # [min, max] m/s²
+    deceleration_range: List[float] = [1.0, 1.5]  # [min, max] m/s²
+    queue_spacing_range: List[float] = [6.0, 10.0]  # [min, max] meters
+
+
 class SimulationRequest(BaseModel):
     """Request to start a simulation."""
 
@@ -46,10 +56,14 @@ class SimulationRequest(BaseModel):
     simulation_config: Optional[SimulationConfig] = None
     phone_config: Optional[PhoneConfig] = None
     physics_config: Optional[PhysicsConfig] = None
+    physics_ranges: Optional[PhysicsRanges] = None  # Ranges for random selection
 
     # Simplified interface - only need crossing name and direction
     crossing_name: str = "paso_del_norte"  # Name of border crossing
     direction: str = "mx2usa"  # Traffic direction: "mx2usa" or "usa2mx"
+
+    # Visual queue spacing (meters between cars when displayed) - deprecated, use physics_ranges
+    queue_spacing: float = 8.0
 
     # Legacy support (optional, ignored if crossing_name provided)
     geojson_path: Optional[str] = None
@@ -122,9 +136,26 @@ async def run_simulation(simulation_id: str):
                 simulation.record_positions()
 
                 # Send real-time update
-                # Collect car data
+                # Collect car data with queue-position-based visual spacing
                 cars_data = []
+
+                # Get queue spacing from ranges or default
+                if sim["request"].physics_ranges:
+                    qs_range = sim["request"].physics_ranges.queue_spacing_range
+                    queue_spacing = (qs_range[0] + qs_range[1]) / 2  # Use average for consistent spacing
+                else:
+                    queue_spacing = sim["request"].queue_spacing
+
                 for queue in simulation.border_crossing.queues:
+                    # Collect queued cars and sort by queue_start_time (arrival order)
+                    queued_cars = [c for c in queue.cars.values() if c.status == "queued" and c.queue_start_time is not None]
+                    queued_cars.sort(key=lambda c: c.queue_start_time)  # Earlier arrivals first
+
+                    # Assign queue positions (1 = first to arrive = front of queue)
+                    for idx, car in enumerate(queued_cars):
+                        car.queue_position = idx + 1  # 1-indexed
+
+                    # Process all cars in this queue
                     for car in queue.cars.values():
                         # Get car-specific waitline or use shared waitline
                         car_waitline = car.waitline if hasattr(car, 'waitline') and car.waitline else simulation.waitline
@@ -134,9 +165,16 @@ async def run_simulation(simulation_id: str):
                         position_coords = [0, 0]
 
                         if car_waitline:
-                            position_point = car_waitline.compute_position_at_distance_from_start(
-                                car.position
-                            )
+                            # For queued cars, use queue position for visual spacing
+                            # Cars display at: path_end - (queue_position - 1) * spacing
+                            # So first car (position 1) is at path_end, second is spacing meters back, etc.
+                            if car.status == "queued" and car.queue_position is not None:
+                                path_length = car_waitline.waitline_length
+                                visual_pos = max(0, path_length - (car.queue_position - 1) * queue_spacing)
+                                position_point = car_waitline.compute_position_at_distance_from_start(visual_pos)
+                            else:
+                                # Approaching/serving/completed - use actual physics position
+                                position_point = car_waitline.compute_position_at_distance_from_start(car.position)
                             if position_point and simulation.bounds_polygon:
                                 # Constrain position to bounds
                                 position_point = constrain_point_to_bounds(
@@ -161,6 +199,8 @@ async def run_simulation(simulation_id: str):
                             "id": str(car.car_id),
                             "position": position_coords,
                             "status": car.status,
+                            "status_start_time": float(car.status_start_time) if car.status_start_time is not None else None,
+                            "queue_position": int(car.queue_position) if car.queue_position is not None else None,
                             "velocity": float(car.velocity) if car.velocity is not None else None,
                             "acceleration": float(car.acceleration) if car.acceleration is not None else None,
                             "queue_id": int(car.queue_id) if car.queue_id is not None else None,
@@ -236,7 +276,13 @@ async def run_simulation(simulation_id: str):
 
                 # Log simulation progress every 100 iterations (~10 seconds)
                 if iteration % 100 == 0:
-                    print(f"Simulation {simulation_id}: {len(cars_data)} cars active, {simulation.border_crossing.total_arrivals} arrivals, {simulation.border_crossing.total_completions} completions, time={simulation.temporal_state['simulation_time']:.1f}s")
+                    # Count cars by status
+                    serving_count = sum(1 for q in simulation.border_crossing.queues for c in q.cars.values() if c.status == "serving")
+                    queued_count = sum(1 for q in simulation.border_crossing.queues for c in q.cars.values() if c.status == "queued")
+                    approaching_count = sum(1 for q in simulation.border_crossing.queues for c in q.cars.values() if c.status == "approaching")
+                    completed_count = len(simulation.border_crossing.completed_cars)
+                    avg_wait_str = f"{avg_wait_time:.1f}s" if avg_wait_time else "N/A"
+                    print(f"Simulation {simulation_id}: {len(cars_data)} cars active (approaching={approaching_count}, queued={queued_count}, serving={serving_count}), arrivals={simulation.border_crossing.total_arrivals}, completed={completed_count}, avg_wait={avg_wait_str}, time={simulation.temporal_state['simulation_time']:.1f}s")
 
                 if simulation_id in websockets:
                     for ws in websockets[simulation_id]:
@@ -1202,6 +1248,46 @@ async def get_simulation_config():
         }
 
     return config
+
+
+@router.get("/crossing/{crossing_name}/config")
+async def get_crossing_config(crossing_name: str):
+    """
+    Get configuration data for a specific crossing including slowdown zones.
+
+    Args:
+        crossing_name: Name of the crossing (e.g., "paso_del_norte", "bridge_of_the_americas")
+
+    Returns:
+        Crossing configuration including preferred_queue_geometry and slowdown_zones
+    """
+    import json
+    import os
+
+    # Load bounding_boxes.json
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    bounding_boxes_path = os.path.join(root_dir, "cascabel", "paths", "bounding_boxes.json")
+
+    if not os.path.exists(bounding_boxes_path):
+        raise HTTPException(
+            status_code=404, detail="Bounding boxes configuration not found"
+        )
+
+    try:
+        with open(bounding_boxes_path, "r") as f:
+            all_crossings = json.load(f)
+
+        if crossing_name not in all_crossings:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Crossing '{crossing_name}' not found. Available: {list(all_crossings.keys())}"
+            )
+
+        return all_crossings[crossing_name]
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Error parsing bounding boxes: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading crossing config: {str(e)}")
 
 
 @router.get("/geojson/{path_name:path}")

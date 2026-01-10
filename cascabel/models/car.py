@@ -48,7 +48,9 @@ class Car:
 
         # Queue status
         self.status = "arriving"  # arriving, queued, serving, completed
+        self.status_start_time = None  # When current status started (reset on every status change)
         self.queue_id = None
+        self.queue_position = None  # Position in queue (1 = first/front, 2 = second, etc.)
         self.arrival_time = None
         self.queue_start_time = None  # When car first entered queued state (blocked by traffic)
         self.service_start_time = None
@@ -208,6 +210,9 @@ class Car:
     def set_status(self, status, timestamp=None):
         """Update car status with timestamp"""
         self.status = status
+        # Always update status_start_time when status changes
+        self.status_start_time = timestamp or datetime.now().timestamp()
+
         # Set arrival_time when car first enters the system (approaching or queued)
         if status in ["approaching", "queued"] and not self.arrival_time:
             self.arrival_time = timestamp or datetime.now().timestamp()

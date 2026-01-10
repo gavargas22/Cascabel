@@ -35,15 +35,28 @@ export interface PhysicsConfig {
   max_deceleration: number;  // m/s² - higher absolute = harder braking
 }
 
+// Ranges for random selection during simulation
+export interface PhysicsRanges {
+  speed_range: [number, number];  // [min, max] m/s
+  safe_distance_range: [number, number];  // [min, max] meters
+  acceleration_range: [number, number];  // [min, max] m/s²
+  deceleration_range: [number, number];  // [min, max] m/s²
+  queue_spacing_range: [number, number];  // [min, max] meters
+}
+
 export interface SimulationRequest {
   border_config: BorderCrossingConfig;
   simulation_config?: SimulationConfig;
   phone_config?: PhoneConfig;
   physics_config?: PhysicsConfig;
+  physics_ranges?: PhysicsRanges;  // Ranges for random selection
 
   // New simplified interface
   crossing_name: string;  // e.g., "paso_del_norte", "bridge_of_the_americas"
   direction: string;       // "mx2usa" or "usa2mx"
+
+  // Visual queue spacing (meters between cars when displayed) - deprecated, use physics_ranges
+  queue_spacing?: number;
 
   // Legacy support (optional)
   geojson_path?: string;
@@ -259,18 +272,21 @@ export const api = {
     return response.json();
   },
 
-  // Get queue geometry for a specific crossing
-  getQueueGeometry: async (crossingName: string): Promise<any> => {
-    // Fetch bounding_boxes.json from backend or construct from API
-    // For now, we'll need to add a backend endpoint or fetch directly
-    const response = await fetch(`/cascabel/paths/bounding_boxes.json`);
+  // Get crossing configuration including queue geometry and slowdown zones
+  getCrossingConfig: async (crossingName: string): Promise<any> => {
+    const response = await fetch(`${API_BASE_URL}/crossing/${crossingName}/config`);
 
     if (!response.ok) {
-      throw new Error(`Failed to get queue geometry: ${response.statusText}`);
+      throw new Error(`Failed to get crossing config: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    return data[crossingName]?.preferred_queue_geometry || null;
+    return response.json();
+  },
+
+  // Get queue geometry for a specific crossing
+  getQueueGeometry: async (crossingName: string): Promise<any> => {
+    const config = await api.getCrossingConfig(crossingName);
+    return config?.preferred_queue_geometry || null;
   },
 
   // WebSocket URL

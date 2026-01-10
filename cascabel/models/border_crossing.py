@@ -344,6 +344,11 @@ class BorderCrossing:
                     # Store in history for metrics calculation
                     self.completed_cars.append(completed_car)
 
+                    # Debug logging
+                    if completed_car.car_id <= 10:
+                        wait_time = completed_car.service_start_time - completed_car.arrival_time if completed_car.service_start_time and completed_car.arrival_time else 0
+                        print(f">>> Car {completed_car.car_id} COMPLETED at {self.current_time:.1f}s, wait_time={wait_time:.1f}s (arrival={completed_car.arrival_time:.1f}s, service_start={completed_car.service_start_time:.1f}s)")
+
                     # Don't remove immediately - let car drive past booth
                     # Car will be removed when it reaches removal distance past booth
 
@@ -379,6 +384,8 @@ class BorderCrossing:
             if node.start_service(first_car, self.current_time):
                 # Don't remove from car_positions yet - keep visible until completion
                 # The car will be removed when service completes
+                if first_car.car_id <= 10:  # Debug first 10 cars
+                    print(f">>> Car {first_car.car_id} started SERVICE at node {node.node_id}, completion_time={node.service_completion_time:.1f}s (current={self.current_time:.1f}s)")
                 break
 
     def get_statistics(self):

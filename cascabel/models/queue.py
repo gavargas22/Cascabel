@@ -41,6 +41,9 @@ class CarQueue:
         else:
             self.mm1_queue = None
 
+        # Track current time even when mm1_queue is None
+        self._current_time = 0.0
+
         # Car management
         self.cars = {}  # car_id -> Car object
         self.car_positions = []  # Ordered list of car positions along queue
@@ -49,6 +52,12 @@ class CarQueue:
         # Queue state
         self.serving_car = None  # Car currently being served
         self.service_nodes = []  # Service nodes assigned to this queue
+
+    def get_current_time(self):
+        """Get current simulation time from mm1_queue or internal tracking."""
+        if self.mm1_queue:
+            return self.mm1_queue.current_time
+        return self._current_time
 
     def add_car(self, car_id=None, sampling_rate=10, phone_config=None, car_waitline=None):
         """
@@ -84,7 +93,7 @@ class CarQueue:
         car = Car(car_id, sampling_rate, phone_config, initial_position=initial_position, waitline=waitline_for_car)
 
         # Set initial status to approaching and record arrival time
-        current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+        current_time = self.get_current_time()
         car.set_status("approaching", current_time)
 
         # Give each car a preferred speed - check for custom physics config
@@ -127,7 +136,7 @@ class CarQueue:
         """
         if car_id in self.cars:
             car = self.cars[car_id]
-            current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+            current_time = self.get_current_time()
             car.set_status("completed", current_time)
 
             # Remove from tracking
@@ -311,7 +320,7 @@ class CarQueue:
             return
 
         # Get current simulation time for statistics
-        current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+        current_time = self.get_current_time()
 
         # Debug: Print car state summary every 100 updates
         if not hasattr(self, '_update_count'):
@@ -400,9 +409,11 @@ class CarQueue:
                 # This prevents piling up when multiple cars are near booth
                 car_ahead = None
                 min_distance = float('inf')
-                detection_range = 20.0  # Only check cars within 20m
+                detection_range = 50.0  # Check cars within 50m for early detection
 
-                for other_car in sorted_cars:
+                # Check ALL cars in ALL queues for collision (not just sorted_cars)
+                all_cars = list(self.cars.values())
+                for other_car in all_cars:
                     if other_car.car_id == car.car_id:
                         continue
 
@@ -415,8 +426,9 @@ class CarQueue:
                         if other_geo_distance_to_booth is None:
                             continue
 
-                        # Only consider cars that are closer to booth OR very close geographically
-                        is_ahead = (other_geo_distance_to_booth < geo_distance_to_booth) or (geographic_distance < self.safe_distance * 2)
+                        # Consider car as "ahead" if it's closer to booth OR very close geographically
+                        # This handles converging paths where cars might be side by side
+                        is_ahead = (other_geo_distance_to_booth < geo_distance_to_booth) or (geographic_distance < self.safe_distance * 3)
 
                         if is_ahead:
                             # Subtract other car's length to get gap
@@ -435,24 +447,37 @@ class CarQueue:
                 # CRITICAL: Only transition to queued when NEAR BOOTH and BLOCKED
                 # Check if we should transition to queued state (using geographic distance)
                 should_transition_to_queued = False
-                if geo_distance_to_booth < 100:  # Must be in booth area (100m)
+
+                # Also check path-based distance (car near end of path)
+                car_waitline = car.waitline if hasattr(car, 'waitline') and car.waitline else self.waitline
+                path_distance_to_end = 0
+                if car_waitline and hasattr(car_waitline, 'waitline_length'):
+                    path_distance_to_end = car_waitline.waitline_length - car.position
+
+                # Use either geographic distance OR path distance (whichever indicates closer to booth)
+                effective_distance_to_booth = min(geo_distance_to_booth, path_distance_to_end) if path_distance_to_end > 0 else geo_distance_to_booth
+
+                if effective_distance_to_booth < 100:  # Must be in booth area (100m)
                     if car_ahead is not None and min_distance < self.safe_distance * 1.5:
                         # Blocked by car ahead in booth area - this is a queue
                         should_transition_to_queued = True
-                    elif geo_distance_to_booth < 5 and car_ahead is None:
+                    elif effective_distance_to_booth < 5 and car_ahead is None:
                         # Reached booth with no car ahead - about to be served
+                        should_transition_to_queued = True
+                    elif path_distance_to_end < 3:
+                        # Car is at end of path - must transition
                         should_transition_to_queued = True
 
                 if should_transition_to_queued:
-                    current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+                    current_time = self.get_current_time()
                     car.set_status("queued", current_time)
                     if car.car_id <= 10:
-                        print(f">>> Car {car.car_id} ENTERED QUEUED state at {geo_distance_to_booth:.1f}m from booth")
+                        print(f">>> Car {car.car_id} ENTERED QUEUED state at geo={geo_distance_to_booth:.1f}m, path_end={path_distance_to_end:.1f}m")
                     # Will handle movement in queued state below
                 else:
                     # Still approaching - handle car following and booth approach
                     # Detect cars from further away to prevent piling up
-                    if car_ahead is not None and min_distance < self.safe_distance * 5:
+                    if car_ahead is not None:
                         # Car ahead detected - maintain safe distance
                         if min_distance <= 0:
                             # Overlapping! Stop immediately
@@ -460,20 +485,23 @@ class CarQueue:
                         elif min_distance < self.safe_distance:
                             # Too close - STOP completely
                             target_velocity = 0.0
-                        elif min_distance < self.safe_distance * 1.5:
-                            # Very close - slow crawl
-                            target_velocity = car.queue_velocity * 0.3
                         elif min_distance < self.safe_distance * 2:
-                            # Close - slow down significantly
-                            target_velocity = car.queue_velocity * 0.6
+                            # Very close - slow crawl (don't depend on car_ahead velocity)
+                            target_velocity = car.queue_velocity * 0.3
                         elif min_distance < self.safe_distance * 3:
-                            # Moderate distance - match car ahead speed
-                            target_velocity = min(car_ahead.velocity, control_speed_limit * 0.7)
+                            # Close - slow down significantly
+                            target_velocity = car.queue_velocity * 0.5
+                        elif min_distance < self.safe_distance * 5:
+                            # Moderate distance - accelerate to close gap
+                            target_velocity = control_speed_limit * 0.6
+                        elif min_distance < self.safe_distance * 8:
+                            # Approaching car ahead - drive normally
+                            target_velocity = control_speed_limit * 0.8
                         else:
-                            # Approaching car ahead - slow down
-                            target_velocity = min(car_ahead.velocity * 1.1, control_speed_limit * 0.85)
+                            # Far enough - normal driving
+                            target_velocity = control_speed_limit * 0.9
                     else:
-                        # No car ahead or far enough - normal driving
+                        # No car ahead - normal driving
                         if geo_distance_to_booth < 50:
                             # Approaching booth - slow down
                             slowdown_factor = geo_distance_to_booth / 50.0
@@ -505,7 +533,7 @@ class CarQueue:
                 # Find the closest blocking car (game-like collision detection)
                 car_ahead = None
                 min_distance = float('inf')
-                detection_range = 15.0  # meters
+                detection_range = 30.0  # meters - wider range for queued cars
 
                 for other_car in self.cars.values():
                     if other_car.car_id == car.car_id:
@@ -521,10 +549,10 @@ class CarQueue:
                     if other_dist_to_booth is None:
                         continue
 
-                    # Car is "blocking" if it's:
-                    # 1. Closer to booth than me (ahead)
-                    # 2. Within detection range
-                    if other_dist_to_booth < geo_distance_to_booth:
+                    # Car is "blocking" if it's closer to booth OR very close geographically
+                    is_blocking = (other_dist_to_booth < geo_distance_to_booth) or (geo_dist < self.safe_distance * 3)
+
+                    if is_blocking:
                         # This car is ahead - calculate actual gap
                         gap = geo_dist - other_car.length
 
@@ -567,16 +595,18 @@ class CarQueue:
                         target_velocity = 0.0
                     elif min_distance < self.safe_distance * 1.5:
                         # Approaching safe distance - very slow crawl
-                        target_velocity = car.queue_velocity * 0.2
+                        target_velocity = car.queue_velocity * 0.3
                     elif min_distance < self.safe_distance * 2:
                         # Good spacing - slow queue speed
-                        target_velocity = car.queue_velocity * 0.5
+                        target_velocity = car.queue_velocity * 0.6
                     elif min_distance < self.safe_distance * 3:
                         # Comfortable distance - normal queue speed
                         target_velocity = car.queue_velocity
                     else:
-                        # Large gap - move forward faster (but not too fast)
-                        target_velocity = min(car.queue_velocity * 1.2, car_ahead.velocity)
+                        # Large gap - move forward to close gap
+                        # Don't limit by car_ahead velocity - accelerate independently
+                        # This allows cars to resume after the path clears
+                        target_velocity = car.queue_velocity * 1.5
 
                 car.update_physics(target_velocity, dt)
                 car.update_statistics(current_time, dt)
@@ -618,7 +648,7 @@ class CarQueue:
                 first_car = sorted_cars[0]
 
                 # Start service
-                current_time = self.mm1_queue.current_time if self.mm1_queue else 0
+                current_time = self.get_current_time()
                 first_car.set_status("serving", current_time)
                 self.serving_car = first_car
 
@@ -641,6 +671,9 @@ class CarQueue:
         Args:
             dt: Time step (seconds)
         """
+        # Always update internal time tracking
+        self._current_time += dt
+
         if self.mm1_queue:
             self.mm1_queue.current_time += dt
 
