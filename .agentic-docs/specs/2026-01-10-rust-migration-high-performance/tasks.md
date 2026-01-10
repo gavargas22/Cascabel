@@ -13,16 +13,16 @@
   - [x] 1.5 Configure Docker build for Rust backend alongside existing Python backend
   - [x] 1.6 Verify all tests pass and server starts correctly
 
-- [ ] 2. Implement ECS Simulation Engine with Bevy ECS
-  - [ ] 2.1 Write unit tests for ECS components (Position, Velocity, Acceleration, CarStatus, QueueMembership, Path)
-  - [ ] 2.2 Define all ECS component structs matching current Python simulation data model
-  - [ ] 2.3 Write tests for physics system (position/velocity/acceleration integration)
-  - [ ] 2.4 Implement physics_system with parallel iteration using par_iter_mut()
-  - [ ] 2.5 Write tests for car spawning and despawning systems
-  - [ ] 2.6 Implement car arrival and completion systems
-  - [ ] 2.7 Write tests for queue assignment and lane switching behavior
-  - [ ] 2.8 Implement queue management systems with lane switching logic
-  - [ ] 2.9 Verify physics accuracy within 0.1% tolerance of Python implementation
+- [x] 2. Implement ECS Simulation Engine with Bevy ECS
+  - [x] 2.1 Write unit tests for ECS components (Position, Velocity, Acceleration, CarStatus, QueueMembership, Path)
+  - [x] 2.2 Define all ECS component structs matching current Python simulation data model
+  - [x] 2.3 Write tests for physics system (position/velocity/acceleration integration)
+  - [x] 2.4 Implement physics_system with parallel iteration using par_iter_mut()
+  - [x] 2.5 Write tests for car spawning and despawning systems
+  - [x] 2.6 Implement car arrival and completion systems
+  - [x] 2.7 Write tests for queue assignment and lane switching behavior
+  - [x] 2.8 Implement queue management systems with lane switching logic
+  - [x] 2.9 Verify physics accuracy within 0.1% tolerance of Python implementation
 
 - [ ] 3. Implement R-tree Spatial Indexing
   - [ ] 3.1 Write tests for R-tree insertion and nearest neighbor queries
