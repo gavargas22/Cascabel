@@ -9,9 +9,10 @@ import {
   Collapse,
   Tag,
   Callout,
+  RangeSlider,
 } from '@blueprintjs/core';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { api, BorderCrossingConfig, SimulationConfig, PhysicsConfig } from '../services/api';
+import { api, BorderCrossingConfig, SimulationConfig } from '../services/api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -22,6 +23,8 @@ interface SimulationUpdate {
       id: string;
       position: [number, number];
       status: string;
+      status_start_time?: number;  // When current status started (simulation time)
+      queue_position?: number;  // Position in queue (1 = front)
       velocity?: number;
       acceleration?: number;
       queue_id?: number;
@@ -72,7 +75,13 @@ const FullscreenDashboard: React.FC = () => {
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [simulationData, setSimulationData] = useState<SimulationUpdate['data'] | null>(null);
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
-  const [queueGeometry, setQueueGeometry] = useState<any>(null);
+  const [slowdownZones, setSlowdownZones] = useState<Array<{
+    type: 'booth' | 'slowdown';
+    name: string;
+    description: string;
+    coordinates: [number, number];
+    target_speed_mps?: number;
+  }>>([]);
 
   // Crossing and direction selection
   const [selectedCrossing, setSelectedCrossing] = useState('paso_del_norte');
@@ -81,7 +90,7 @@ const FullscreenDashboard: React.FC = () => {
   // Panel visibility states
   const [showConfig, setShowConfig] = useState(true);
   const [showMetrics, setShowMetrics] = useState(true);
-  const [showPaths, setShowPaths] = useState(true);  // Toggle path visibility
+  const [showPaths, setShowPaths] = useState(true);  // Toggle car path visibility
 
   // Configuration states
   const [borderConfig, setBorderConfig] = useState<BorderCrossingConfig>({
@@ -101,19 +110,17 @@ const FullscreenDashboard: React.FC = () => {
     enable_position_tracking: true,
   });
 
-  const [physicsConfig] = useState<PhysicsConfig>({
-    min_speed_mps: 12.1,
-    max_speed_mps: 14.7,
-    safe_distance_meters: 3.0,
-    max_acceleration: 0.75,
-    max_deceleration: 1.25,
-  });
+  // Physics config ranges [min, max] - actual values randomly selected within range
+  const [speedRange, setSpeedRange] = useState<[number, number]>([12, 15]);  // m/s
+  const [safeDistanceRange, setSafeDistanceRange] = useState<[number, number]>([2, 5]);  // meters
+  const [accelerationRange, setAccelerationRange] = useState<[number, number]>([0.5, 1.0]);  // m/s²
+  const [decelerationRange, setDecelerationRange] = useState<[number, number]>([1.0, 1.5]);  // m/s²
+  const [queueSpacingRange, setQueueSpacingRange] = useState<[number, number]>([6, 10]);  // meters
 
   const [isRunning, setIsRunning] = useState(false);
 
-  // Service time range
-  const [serviceTimeMin, setServiceTimeMin] = useState(3);
-  const [serviceTimeMax, setServiceTimeMax] = useState(6);
+  // Service time range (minutes per car)
+  const [serviceTimeRange, setServiceTimeRange] = useState<[number, number]>([3, 6]);
 
   // Helper functions
   const formatSimTime = (seconds: number): string => {
@@ -144,21 +151,33 @@ const FullscreenDashboard: React.FC = () => {
     }
   };
 
-  // Load queue geometry when crossing changes
+  // Load slowdown zones when crossing changes
   useEffect(() => {
-    const loadQueueGeometry = async () => {
+    const loadSlowdownZones = async () => {
       try {
-        const response = await fetch('/cascabel/paths/bounding_boxes.json');
-        const data = await response.json();
-        const geometry = data[selectedCrossing]?.preferred_queue_geometry;
-        setQueueGeometry(geometry);
-        console.log('Queue geometry loaded:', geometry);
+        const response = await fetch(`${API_BASE_URL}/crossing/${selectedCrossing}/config`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch crossing config: ${response.statusText}`);
+        }
+        const crossingData = await response.json();
+
+        // Load slowdown zones
+        const zones = crossingData?.slowdown_zones || [];
+        const parsedZones = zones.map((zone: any) => ({
+          type: zone.properties?.type || 'slowdown',
+          name: zone.properties?.name || 'Unknown Zone',
+          description: zone.properties?.description || '',
+          coordinates: zone.geometry?.coordinates as [number, number],
+          target_speed_mps: zone.properties?.target_speed_mps,
+        }));
+        setSlowdownZones(parsedZones);
+        console.log('Slowdown zones loaded:', parsedZones);
       } catch (error) {
-        console.error('Failed to load queue geometry:', error);
+        console.error('Failed to load slowdown zones:', error);
       }
     };
 
-    loadQueueGeometry();
+    loadSlowdownZones();
   }, [selectedCrossing]);
 
   // WebSocket connection
@@ -208,8 +227,8 @@ const FullscreenDashboard: React.FC = () => {
     try {
       const generateServiceRates = (numNodes: number) => {
         return Array.from({ length: numNodes }, () => {
-          const range = serviceTimeMax - serviceTimeMin;
-          const serviceTimeMinutes = serviceTimeMin + Math.random() * range;
+          const range = serviceTimeRange[1] - serviceTimeRange[0];
+          const serviceTimeMinutes = serviceTimeRange[0] + Math.random() * range;
           return 1 / serviceTimeMinutes;
         });
       };
@@ -232,7 +251,13 @@ const FullscreenDashboard: React.FC = () => {
           gyro_noise: 0.01,
           device_orientation: 'portrait',
         },
-        physics_config: physicsConfig,
+        physics_ranges: {
+          speed_range: speedRange,
+          safe_distance_range: safeDistanceRange,
+          acceleration_range: accelerationRange,
+          deceleration_range: decelerationRange,
+          queue_spacing_range: queueSpacingRange,
+        },
       });
 
       setSimulationId(response.simulation_id);
@@ -304,30 +329,6 @@ const FullscreenDashboard: React.FC = () => {
           );
         })}
 
-        {/* Queue Geometry Layer (preferred_queue_geometry) - Semi-transparent */}
-        {queueGeometry && showPaths && (
-          <Source id="queue-path" type="geojson" data={queueGeometry}>
-            <Layer
-              id="queue-path-line"
-              type="line"
-              paint={{
-                'line-color': '#ff6b6b',
-                'line-width': 3,
-                'line-opacity': 0.4,  // Semi-transparent
-              }}
-            />
-            <Layer
-              id="queue-path-outline"
-              type="line"
-              paint={{
-                'line-color': '#c92a2a',
-                'line-width': 5,
-                'line-opacity': 0.2,  // Very transparent outline
-              }}
-            />
-          </Source>
-        )}
-
         {/* Car Markers */}
         {simulationData?.cars.map((car) => (
           <Marker
@@ -355,6 +356,67 @@ const FullscreenDashboard: React.FC = () => {
               }}
               title={`Car ${car.id} - ${car.status} - ${car.velocity?.toFixed(1)} m/s`}
             />
+          </Marker>
+        ))}
+
+        {/* Slowdown Zone and Booth Markers */}
+        {slowdownZones.map((zone, index) => (
+          <Marker
+            key={`zone-${index}`}
+            longitude={zone.coordinates[0]}
+            latitude={zone.coordinates[1]}
+            anchor="center"
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+              }}
+            >
+              <div
+                style={{
+                  width: zone.type === 'booth' ? '28px' : '24px',
+                  height: zone.type === 'booth' ? '28px' : '24px',
+                  borderRadius: zone.type === 'booth' ? '6px' : '50%',
+                  backgroundColor: zone.type === 'booth' ? '#e74c3c' : '#f39c12',
+                  border: '3px solid #ffffff',
+                  boxShadow: '0 3px 10px rgba(0,0,0,0.5)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '14px',
+                }}
+                title={`${zone.name}\n${zone.description}${
+                  zone.target_speed_mps
+                    ? `\nTarget Speed: ${(zone.target_speed_mps * 2.237).toFixed(1)} mph`
+                    : ''
+                }`}
+              >
+                {zone.type === 'booth' ? '🚧' : '⚠️'}
+              </div>
+              <div
+                style={{
+                  marginTop: '4px',
+                  padding: '3px 8px',
+                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                  border: `2px solid ${zone.type === 'booth' ? '#e74c3c' : '#f39c12'}`,
+                  borderRadius: '4px',
+                  fontSize: '10px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                  color: '#333',
+                }}
+              >
+                {zone.name}
+                {zone.target_speed_mps && (
+                  <span style={{ color: '#666', fontWeight: 'normal', marginLeft: '4px' }}>
+                    ({(zone.target_speed_mps * 2.237).toFixed(0)} mph)
+                  </span>
+                )}
+              </div>
+            </div>
           </Marker>
         ))}
 
@@ -497,30 +559,6 @@ const FullscreenDashboard: React.FC = () => {
               />
             </FormGroup>
 
-            <FormGroup label="Service Time Range (min)" inline>
-              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                <NumericInput
-                  value={serviceTimeMin}
-                  onValueChange={(val) => setServiceTimeMin(Math.min(val, serviceTimeMax - 0.5))}
-                  min={1}
-                  max={15}
-                  stepSize={0.5}
-                  style={{ width: '60px' }}
-                  disabled={isRunning}
-                />
-                <span>-</span>
-                <NumericInput
-                  value={serviceTimeMax}
-                  onValueChange={(val) => setServiceTimeMax(Math.max(val, serviceTimeMin + 0.5))}
-                  min={1}
-                  max={15}
-                  stepSize={0.5}
-                  style={{ width: '60px' }}
-                  disabled={isRunning}
-                />
-              </div>
-            </FormGroup>
-
             <FormGroup label="Time Factor (speed)" inline>
               <NumericInput
                 value={simulationConfig.time_factor}
@@ -535,6 +573,89 @@ const FullscreenDashboard: React.FC = () => {
               />
             </FormGroup>
 
+            {/* Tunable Physics Parameters - Ranges for random selection */}
+            <div style={{ marginTop: '15px', borderTop: '1px solid #e1e8ed', paddingTop: '15px' }}>
+              <strong style={{ fontSize: '12px', color: '#5c7080' }}>Physics & Spacing (Ranges)</strong>
+              <div style={{ fontSize: '10px', color: '#8a9ba8', marginTop: '2px' }}>
+                Values randomly selected within range for each car
+              </div>
+            </div>
+
+            <FormGroup
+              label={`Queue Spacing: ${queueSpacingRange[0].toFixed(0)}-${queueSpacingRange[1].toFixed(0)}m`}
+              style={{ marginTop: '10px' }}
+            >
+              <RangeSlider
+                min={3}
+                max={20}
+                stepSize={1}
+                value={queueSpacingRange}
+                onChange={(val) => setQueueSpacingRange(val as [number, number])}
+                labelStepSize={5}
+                disabled={isRunning}
+              />
+            </FormGroup>
+
+            <FormGroup label={`Safe Distance: ${safeDistanceRange[0].toFixed(0)}-${safeDistanceRange[1].toFixed(0)}m`}>
+              <RangeSlider
+                min={1}
+                max={12}
+                stepSize={1}
+                value={safeDistanceRange}
+                onChange={(val) => setSafeDistanceRange(val as [number, number])}
+                labelStepSize={3}
+                disabled={isRunning}
+              />
+            </FormGroup>
+
+            <FormGroup label={`Approach Speed: ${(speedRange[0] * 2.237).toFixed(0)}-${(speedRange[1] * 2.237).toFixed(0)} mph`}>
+              <RangeSlider
+                min={5}
+                max={25}
+                stepSize={1}
+                value={speedRange}
+                onChange={(val) => setSpeedRange(val as [number, number])}
+                labelStepSize={5}
+                disabled={isRunning}
+              />
+            </FormGroup>
+
+            <FormGroup label={`Acceleration: ${accelerationRange[0].toFixed(1)}-${accelerationRange[1].toFixed(1)} m/s²`}>
+              <RangeSlider
+                min={0.25}
+                max={2.0}
+                stepSize={0.25}
+                value={accelerationRange}
+                onChange={(val) => setAccelerationRange(val as [number, number])}
+                labelStepSize={0.5}
+                disabled={isRunning}
+              />
+            </FormGroup>
+
+            <FormGroup label={`Deceleration: ${decelerationRange[0].toFixed(1)}-${decelerationRange[1].toFixed(1)} m/s²`}>
+              <RangeSlider
+                min={0.5}
+                max={3.0}
+                stepSize={0.25}
+                value={decelerationRange}
+                onChange={(val) => setDecelerationRange(val as [number, number])}
+                labelStepSize={0.5}
+                disabled={isRunning}
+              />
+            </FormGroup>
+
+            <FormGroup label={`Service Time: ${serviceTimeRange[0].toFixed(0)}-${serviceTimeRange[1].toFixed(0)} min/car`}>
+              <RangeSlider
+                min={1}
+                max={15}
+                stepSize={1}
+                value={serviceTimeRange}
+                onChange={(val) => setServiceTimeRange(val as [number, number])}
+                labelStepSize={3}
+                disabled={isRunning}
+              />
+            </FormGroup>
+
             <div style={{ marginTop: '10px' }}>
               <Button
                 minimal
@@ -542,7 +663,7 @@ const FullscreenDashboard: React.FC = () => {
                 icon={showPaths ? 'eye-open' : 'eye-off'}
                 onClick={() => setShowPaths(!showPaths)}
               >
-                {showPaths ? 'Hide' : 'Show'} Queue Path
+                {showPaths ? 'Hide' : 'Show'} Car Paths
               </Button>
             </div>
 
@@ -690,6 +811,19 @@ const FullscreenDashboard: React.FC = () => {
                         {car.status.toUpperCase()}
                       </Tag>
                     </div>
+                    {car.status_start_time !== undefined && simulationData.metrics.simulation_time !== undefined && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <strong>Time in status:</strong>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#137cbd' }}>
+                          {(() => {
+                            const elapsed = simulationData.metrics.simulation_time - car.status_start_time;
+                            const mins = Math.floor(elapsed / 60);
+                            const secs = Math.floor(elapsed % 60);
+                            return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                          })()}
+                        </span>
+                      </div>
+                    )}
                     {car.velocity !== undefined && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                         <strong>Speed:</strong>
@@ -706,6 +840,14 @@ const FullscreenDashboard: React.FC = () => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                         <strong>Queue:</strong>
                         <span>#{car.queue_id}</span>
+                      </div>
+                    )}
+                    {car.queue_position !== undefined && car.status === 'queued' && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <strong>Queue Position:</strong>
+                        <span style={{ fontWeight: 'bold', color: car.queue_position === 1 ? '#0d8050' : '#5c7080' }}>
+                          #{car.queue_position} {car.queue_position === 1 ? '(Next)' : ''}
+                        </span>
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e0e0e0' }}>
@@ -754,8 +896,12 @@ const FullscreenDashboard: React.FC = () => {
               <span>Serving</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <div style={{ width: '4px', height: '15px', backgroundColor: '#ff6b6b', opacity: 0.4 }} />
-              <span>Queue Zone</span>
+              <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: '#e74c3c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px' }}>🚧</div>
+              <span>Booth</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#f39c12', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px' }}>⚠️</div>
+              <span>Slowdown</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <div style={{ width: '4px', height: '15px', backgroundColor: '#888888', opacity: 0.3 }} />
