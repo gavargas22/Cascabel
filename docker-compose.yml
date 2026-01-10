@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Python API (existing - will be deprecated after Rust migration)
   api:
     build: .
     ports:
@@ -9,6 +10,22 @@ services:
       - ./api:/app/api
       - ./cascabel:/app/cascabel
     command: python api/main.py
+
+  # Rust API (new high-performance backend)
+  rust-api:
+    build:
+      context: ./rust-api
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - RUST_LOG=cascabel_api=info,tower_http=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
   frontend:
     build:

@@ -1,0 +1,45 @@
+[package]
+name = "cascabel-api"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance Rust backend for Cascabel border crossing simulation"
+authors = ["Cascabel Team"]
+license = "MIT"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# ECS for simulation
+bevy_ecs = "0.12"
+
+# Spatial indexing
+rstar = "0.11"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rmp-serde = "1.1"
+
+# Geospatial
+geo = "0.27"
+geojson = "0.24"
+# proj is optional - requires native libproj installation
+# proj = { version = "0.27", optional = true }
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+axum-test = "14"
+
+[[bin]]
+name = "cascabel-api"
+path = "src/main.rs"

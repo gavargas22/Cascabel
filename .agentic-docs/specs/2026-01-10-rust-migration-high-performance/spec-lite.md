@@ -1,0 +1,1 @@
+Migrate Cascabel to Rust for high-performance real-time simulation of thousands of cars. Backend uses Axum with WebSocket streaming and ECS-based physics engine. Frontend uses WebGL instanced rendering (deck.gl or custom) for efficient GPU-accelerated visualization. Target: 5,000+ cars at 60 FPS with <100ms WebSocket latency.
