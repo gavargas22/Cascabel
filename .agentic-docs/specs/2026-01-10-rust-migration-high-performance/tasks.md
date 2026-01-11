@@ -24,14 +24,14 @@
   - [x] 2.8 Implement queue management systems with lane switching logic
   - [x] 2.9 Verify physics accuracy within 0.1% tolerance of Python implementation
 
-- [ ] 3. Implement R-tree Spatial Indexing
-  - [ ] 3.1 Write tests for R-tree insertion and nearest neighbor queries
-  - [ ] 3.2 Implement CarPoint struct with RTreeObject trait
-  - [ ] 3.3 Write tests for collision detection queries within distance threshold
-  - [ ] 3.4 Implement spatial query system for finding nearby cars
-  - [ ] 3.5 Write benchmarks for R-tree performance with 5000+ entities
-  - [ ] 3.6 Implement R-tree rebuild strategy (full rebuild every 10 frames)
-  - [ ] 3.7 Verify O(log n) query performance characteristics
+- [x] 3. Implement R-tree Spatial Indexing
+  - [x] 3.1 Write tests for R-tree insertion and nearest neighbor queries
+  - [x] 3.2 Implement CarPoint struct with RTreeObject trait
+  - [x] 3.3 Write tests for collision detection queries within distance threshold
+  - [x] 3.4 Implement spatial query system for finding nearby cars
+  - [x] 3.5 Write benchmarks for R-tree performance with 5000+ entities
+  - [x] 3.6 Implement R-tree rebuild strategy (full rebuild every 10 frames)
+  - [x] 3.7 Verify O(log n) query performance characteristics
 
 - [ ] 4. Implement WebSocket Server with Binary Protocol
   - [ ] 4.1 Write tests for WebSocket connection lifecycle (connect, stream, disconnect)

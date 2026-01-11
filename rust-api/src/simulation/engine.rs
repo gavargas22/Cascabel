@@ -7,20 +7,27 @@ use bevy_ecs::prelude::*;
 
 use super::components::*;
 use super::resources::*;
+use super::spatial::{spatial_index_update_system, SpatialIndex};
 use super::systems::*;
 
 /// The main simulation engine that manages the ECS world and systems
 pub struct SimulationEngine {
     /// The ECS world containing all entities and resources
     world: World,
+    /// Schedule for spatial index updates
+    spatial_schedule: Schedule,
     /// Schedule for physics updates
     physics_schedule: Schedule,
+    /// Schedule for car behavior (collision avoidance)
+    behavior_schedule: Schedule,
     /// Schedule for status transitions
     status_schedule: Schedule,
     /// Schedule for service node updates
     service_schedule: Schedule,
     /// Schedule for car removal
     removal_schedule: Schedule,
+    /// Whether to use spatial indexing (for large simulations)
+    use_spatial_index: bool,
 }
 
 impl SimulationEngine {
@@ -39,10 +46,18 @@ impl SimulationEngine {
         world.insert_resource(SimulationStats::default());
         world.insert_resource(NextCarId::default());
         world.insert_resource(ArrivalSchedule::default());
+        world.insert_resource(SpatialIndex::new());
 
         // Create schedules
+        let mut spatial_schedule = Schedule::default();
+        spatial_schedule.add_systems(spatial_index_update_system);
+
         let mut physics_schedule = Schedule::default();
         physics_schedule.add_systems((physics_system, path_following_system).chain());
+
+        // Behavior schedule uses the spatial-indexed system
+        let mut behavior_schedule = Schedule::default();
+        behavior_schedule.add_systems(car_behavior_system_spatial);
 
         let mut status_schedule = Schedule::default();
         status_schedule.add_systems(status_transition_system);
@@ -55,11 +70,38 @@ impl SimulationEngine {
 
         Self {
             world,
+            spatial_schedule,
             physics_schedule,
+            behavior_schedule,
             status_schedule,
             service_schedule,
             removal_schedule,
+            use_spatial_index: true,
         }
+    }
+
+    /// Enable or disable spatial indexing
+    ///
+    /// When disabled, uses brute-force O(n^2) collision detection.
+    /// Useful for small simulations where the overhead of maintaining
+    /// the R-tree isn't worth it.
+    pub fn set_use_spatial_index(&mut self, use_it: bool) {
+        self.use_spatial_index = use_it;
+        if !use_it {
+            // Remove the spatial index resource to trigger brute-force fallback
+            self.world.remove_resource::<SpatialIndex>();
+        } else if self.world.get_resource::<SpatialIndex>().is_none() {
+            self.world.insert_resource(SpatialIndex::new());
+        }
+    }
+
+    /// Set the rebuild interval for the spatial index
+    ///
+    /// Lower values mean more frequent rebuilds (more accurate but slower).
+    /// Default is 10 (rebuild every 10 frames).
+    pub fn set_spatial_rebuild_interval(&mut self, interval: u32) {
+        self.world
+            .insert_resource(SpatialIndex::with_rebuild_interval(interval));
     }
 
     /// Set the booth position (for single-booth scenarios)
@@ -119,6 +161,14 @@ impl SimulationEngine {
             let mut time = self.world.resource_mut::<SimulationTime>();
             time.advance(dt);
         }
+
+        // Update spatial index (if enabled)
+        if self.use_spatial_index {
+            self.spatial_schedule.run(&mut self.world);
+        }
+
+        // Run car behavior (collision avoidance)
+        self.behavior_schedule.run(&mut self.world);
 
         // Run physics
         self.physics_schedule.run(&mut self.world);

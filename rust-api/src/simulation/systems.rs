@@ -8,6 +8,7 @@ use bevy_ecs::prelude::*;
 
 use super::components::*;
 use super::resources::*;
+use super::spatial::SpatialIndex;
 
 /// Physics system: Updates position and velocity based on acceleration
 ///
@@ -92,6 +93,9 @@ pub fn path_following_system(
 /// - Queued cars maintain safe distance from car ahead
 /// - Serving cars stay stationary
 /// - Completed cars drive away
+///
+/// NOTE: This is the brute-force O(n^2) version. For simulations with many cars,
+/// use `car_behavior_system_spatial` which uses R-tree spatial indexing for O(n log n).
 pub fn car_behavior_system(
     config: Res<SimulationConfig>,
     booth: Option<Res<BoothPosition>>,
@@ -179,6 +183,143 @@ pub fn car_behavior_system(
 
         acc.ax = direction.0 * acc_magnitude * acc_sign;
         acc.ay = direction.1 * acc_magnitude * acc_sign;
+    }
+}
+
+/// Car behavior system with R-tree spatial indexing for O(log n) collision detection
+///
+/// This is the optimized version that uses a pre-built spatial index to find
+/// nearby cars efficiently. The SpatialIndex resource must be kept up-to-date
+/// by running `spatial_index_update_system` before this system.
+///
+/// Performance: O(n log n) total for n cars, vs O(n^2) for brute force.
+pub fn car_behavior_system_spatial(
+    config: Res<SimulationConfig>,
+    booth: Option<Res<BoothPosition>>,
+    spatial_index: Option<Res<SpatialIndex>>,
+    mut query: Query<(
+        Entity,
+        &Position,
+        &mut Velocity,
+        &mut Acceleration,
+        &CarStatus,
+        &PhysicsProperties,
+        &Path,
+        &Car,
+    )>,
+) {
+    let booth_pos = booth.as_ref().map(|b| b.position);
+    let booth_array = booth_pos.map(|p| [p.x, p.y]);
+
+    // If no spatial index, fall back to collecting car data
+    let car_data: Option<Vec<_>> = if spatial_index.is_none() {
+        Some(
+            query
+                .iter()
+                .map(|(entity, pos, _, _, status, _, _, car)| {
+                    (entity, *pos, status.0, car.id, car.length)
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    for (entity, pos, vel, mut acc, status, props, path, _car) in query.iter_mut() {
+        // Calculate distance to booth
+        let distance_to_booth = if let Some(bp) = booth_pos {
+            pos.distance_to(&bp)
+        } else {
+            path.remaining_distance()
+        };
+
+        // Find closest car ahead using spatial index or brute force
+        let (car_ahead_distance, car_ahead_velocity) =
+            if let Some(ref index) = spatial_index {
+                // Use R-tree spatial index for O(log n) query
+                find_car_ahead_spatial(
+                    entity,
+                    [pos.x, pos.y],
+                    distance_to_booth,
+                    index,
+                    config.detection_range,
+                    booth_array,
+                )
+            } else if let Some(ref data) = car_data {
+                // Fallback to brute force
+                find_car_ahead(entity, pos, distance_to_booth, data, config.detection_range)
+            } else {
+                (None, None)
+            };
+
+        // Calculate target velocity based on status
+        let target_velocity = match status.0 {
+            Status::Approaching => calculate_approaching_velocity(
+                distance_to_booth,
+                car_ahead_distance,
+                car_ahead_velocity,
+                props,
+                &config,
+            ),
+            Status::Queued => calculate_queued_velocity(
+                distance_to_booth,
+                car_ahead_distance,
+                car_ahead_velocity,
+                props,
+                &config,
+            ),
+            Status::Serving => 0.0,
+            Status::Completed => props.queue_velocity * 2.0, // Exit speed
+        };
+
+        // Calculate required acceleration to reach target velocity
+        let current_speed = vel.speed();
+        let speed_diff = target_velocity - current_speed;
+
+        // Determine max acceleration/deceleration
+        let max_acc = if speed_diff >= 0.0 {
+            props.max_acceleration
+        } else {
+            props.max_deceleration
+        };
+
+        // Calculate acceleration magnitude (clamped)
+        let acc_magnitude = speed_diff.abs().min(max_acc);
+        let acc_sign = if speed_diff >= 0.0 { 1.0 } else { -1.0 };
+
+        // Apply acceleration in direction of travel
+        let direction = if current_speed > 0.001 {
+            (vel.vx / current_speed, vel.vy / current_speed)
+        } else if let Some((_, angle)) = path.interpolate(path.position_along_path) {
+            (angle.cos(), angle.sin())
+        } else {
+            (1.0, 0.0)
+        };
+
+        acc.ax = direction.0 * acc_magnitude * acc_sign;
+        acc.ay = direction.1 * acc_magnitude * acc_sign;
+    }
+}
+
+/// Find the closest car ahead using R-tree spatial index
+fn find_car_ahead_spatial(
+    entity: Entity,
+    pos: [f64; 2],
+    my_distance_to_booth: f64,
+    spatial_index: &SpatialIndex,
+    detection_range: f64,
+    booth_pos: Option<[f64; 2]>,
+) -> (Option<f64>, Option<f64>) {
+    if let Some((gap, _entry)) = spatial_index.find_blocking_car(
+        entity,
+        pos,
+        my_distance_to_booth,
+        detection_range,
+        booth_pos,
+    ) {
+        (Some(gap), Some(0.0)) // Velocity tracking could be added later
+    } else {
+        (None, None)
     }
 }
 
