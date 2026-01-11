@@ -44,20 +44,20 @@
   - [x] 4.8 Implement ControlMessage handling and heartbeat mechanism
   - [x] 4.9 Verify <100ms WebSocket latency with 5000+ cars
 
-- [ ] 5. Port REST API Endpoints from FastAPI
-  - [ ] 5.1 Write integration tests for POST /simulate endpoint
-  - [ ] 5.2 Implement /simulate endpoint with BorderConfig and SimulationConfig parsing
-  - [ ] 5.3 Write tests for GET /simulation/{id}/status endpoint
-  - [ ] 5.4 Implement simulation status endpoint with progress and metrics
-  - [ ] 5.5 Write tests for POST /simulation/{id}/stop endpoint
-  - [ ] 5.6 Implement stop endpoint with telemetry persistence
-  - [ ] 5.7 Write tests for GET /simulation/{id}/car/{car_id} endpoint
-  - [ ] 5.8 Implement car detail endpoint with full statistics
-  - [ ] 5.9 Write tests for PUT /simulation/{id}/time_speed and POST /simulation/{id}/add_station
-  - [ ] 5.10 Implement time speed control and station addition endpoints
-  - [ ] 5.11 Write tests for GET /crossing/{name}/config endpoint
-  - [ ] 5.12 Implement crossing config endpoint with GeoJSON loading
-  - [ ] 5.13 Verify API parity with existing FastAPI implementation
+- [x] 5. Port REST API Endpoints from FastAPI
+  - [x] 5.1 Write integration tests for POST /simulate endpoint
+  - [x] 5.2 Implement /simulate endpoint with BorderConfig and SimulationConfig parsing
+  - [x] 5.3 Write tests for GET /simulation/{id}/status endpoint
+  - [x] 5.4 Implement simulation status endpoint with progress and metrics
+  - [x] 5.5 Write tests for POST /simulation/{id}/stop endpoint
+  - [x] 5.6 Implement stop endpoint with telemetry persistence
+  - [x] 5.7 Write tests for GET /simulation/{id}/car/{car_id} endpoint
+  - [x] 5.8 Implement car detail endpoint with full statistics
+  - [x] 5.9 Write tests for PUT /simulation/{id}/time_speed and POST /simulation/{id}/add_station
+  - [x] 5.10 Implement time speed control and station addition endpoints
+  - [x] 5.11 Write tests for GET /crossing/{name}/config endpoint
+  - [x] 5.12 Implement crossing config endpoint with GeoJSON loading
+  - [x] 5.13 Verify API parity with existing FastAPI implementation
 
 - [ ] 6. Add deck.gl WebGL Rendering Layer to Frontend
   - [ ] 6.1 Write tests for deck.gl ScatterplotLayer rendering with mock car data

@@ -10,14 +10,15 @@ use axum_test::TestServer;
 use cascabel_api::{
     create_app_with_state,
     messages::{CarState, MetricsUpdate, ServerMessage, ServiceNodeState, SimulationUpdate},
-    WebSocketState,
+    WebSocketState, SimulationState,
 };
 
 /// Test that the WebSocket endpoint exists and is accessible
 #[tokio::test]
 async fn test_websocket_endpoint_exists() {
     let ws_state = WebSocketState::new();
-    let app = create_app_with_state(ws_state);
+    let sim_state = SimulationState::new();
+    let app = create_app_with_state(ws_state, sim_state);
     let server = TestServer::new(app).expect("Failed to create test server");
 
     // A regular GET without WebSocket upgrade should fail
