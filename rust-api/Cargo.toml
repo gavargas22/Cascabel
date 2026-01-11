@@ -35,6 +35,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1.0"
+futures-util = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -47,4 +48,8 @@ path = "src/main.rs"
 
 [[bench]]
 name = "spatial_benchmarks"
+harness = false
+
+[[bench]]
+name = "websocket_benchmarks"
 harness = false

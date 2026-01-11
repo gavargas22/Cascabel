@@ -15,9 +15,16 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use api::health::health_check;
+pub use api::messages;
+pub use api::websocket::{ws_handler, WebSocketState};
 
 /// Create the main application router with all routes and middleware
 pub fn create_app() -> Router {
+    create_app_with_state(WebSocketState::new())
+}
+
+/// Create the main application router with custom WebSocket state
+pub fn create_app_with_state(ws_state: WebSocketState) -> Router {
     // Configure CORS
     // Note: Cannot use wildcard (*) headers/methods with credentials
     let cors = CorsLayer::new()
@@ -35,12 +42,16 @@ pub fn create_app() -> Router {
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
             axum::http::header::AUTHORIZATION,
+            axum::http::header::UPGRADE,
+            axum::http::header::CONNECTION,
         ])
         .allow_credentials(true);
 
     // Build router with routes and middleware
     Router::new()
         .route("/health", get(health_check))
+        .route("/ws/{simulation_id}", get(ws_handler))
+        .with_state(ws_state)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
 }

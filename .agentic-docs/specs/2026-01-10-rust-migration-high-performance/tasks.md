@@ -33,16 +33,16 @@
   - [x] 3.6 Implement R-tree rebuild strategy (full rebuild every 10 frames)
   - [x] 3.7 Verify O(log n) query performance characteristics
 
-- [ ] 4. Implement WebSocket Server with Binary Protocol
-  - [ ] 4.1 Write tests for WebSocket connection lifecycle (connect, stream, disconnect)
-  - [ ] 4.2 Implement WebSocket endpoint at /ws/{simulation_id}
-  - [ ] 4.3 Write tests for MessagePack serialization of SimulationUpdate messages
-  - [ ] 4.4 Implement CarState and Metrics structs with serde serialization
-  - [ ] 4.5 Write tests for PositionOnlyUpdate compact message format
-  - [ ] 4.6 Implement 10Hz full state updates and optional 30Hz position-only updates
-  - [ ] 4.7 Write tests for client control messages (pause, resume, time speed)
-  - [ ] 4.8 Implement ControlMessage handling and heartbeat mechanism
-  - [ ] 4.9 Verify <100ms WebSocket latency with 5000+ cars
+- [x] 4. Implement WebSocket Server with Binary Protocol
+  - [x] 4.1 Write tests for WebSocket connection lifecycle (connect, stream, disconnect)
+  - [x] 4.2 Implement WebSocket endpoint at /ws/{simulation_id}
+  - [x] 4.3 Write tests for MessagePack serialization of SimulationUpdate messages
+  - [x] 4.4 Implement CarState and Metrics structs with serde serialization
+  - [x] 4.5 Write tests for PositionOnlyUpdate compact message format
+  - [x] 4.6 Implement 10Hz full state updates and optional 30Hz position-only updates
+  - [x] 4.7 Write tests for client control messages (pause, resume, time speed)
+  - [x] 4.8 Implement ControlMessage handling and heartbeat mechanism
+  - [x] 4.9 Verify <100ms WebSocket latency with 5000+ cars
 
 - [ ] 5. Port REST API Endpoints from FastAPI
   - [ ] 5.1 Write integration tests for POST /simulate endpoint
