@@ -59,16 +59,16 @@
   - [x] 5.12 Implement crossing config endpoint with GeoJSON loading
   - [x] 5.13 Verify API parity with existing FastAPI implementation
 
-- [ ] 6. Add deck.gl WebGL Rendering Layer to Frontend
-  - [ ] 6.1 Write tests for deck.gl ScatterplotLayer rendering with mock car data
-  - [ ] 6.2 Add deck.gl dependencies to package.json (@deck.gl/core, @deck.gl/layers, @deck.gl/mapbox)
-  - [ ] 6.3 Create DeckGLOverlay component integrating with existing Mapbox map
-  - [ ] 6.4 Write tests for car position updates triggering layer re-render
-  - [ ] 6.5 Implement ScatterplotLayer with getPosition, getRadius, getFillColor based on car status
-  - [ ] 6.6 Write tests for pickable interactions (car click/hover)
-  - [ ] 6.7 Implement car picking and selection highlighting
-  - [ ] 6.8 Write performance tests verifying 60 FPS with 5000+ points
-  - [ ] 6.9 Verify rendering performance on mid-range GPU
+- [x] 6. Add deck.gl WebGL Rendering Layer to Frontend
+  - [x] 6.1 Write tests for deck.gl ScatterplotLayer rendering with mock car data
+  - [x] 6.2 Add deck.gl dependencies to package.json (@deck.gl/core, @deck.gl/layers, @deck.gl/mapbox)
+  - [x] 6.3 Create DeckGLOverlay component integrating with existing Mapbox map
+  - [x] 6.4 Write tests for car position updates triggering layer re-render
+  - [x] 6.5 Implement ScatterplotLayer with getPosition, getRadius, getFillColor based on car status
+  - [x] 6.6 Write tests for pickable interactions (car click/hover)
+  - [x] 6.7 Implement car picking and selection highlighting
+  - [x] 6.8 Write performance tests verifying 60 FPS with 5000+ points
+  - [x] 6.9 Verify rendering performance on mid-range GPU
 
 - [ ] 7. Implement Binary WebSocket Client in Frontend
   - [ ] 7.1 Write tests for MessagePack message decoding

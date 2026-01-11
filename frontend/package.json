@@ -5,6 +5,10 @@
   "dependencies": {
     "@blueprintjs/core": "^6.3.1",
     "@blueprintjs/icons": "^6.1.0",
+    "@deck.gl/core": "^9.0.0",
+    "@deck.gl/layers": "^9.0.0",
+    "@deck.gl/mapbox": "^9.0.0",
+    "@deck.gl/react": "^9.0.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
@@ -52,5 +56,14 @@
     "@types/text-encoding": "^0.0.40",
     "canvas": "^3.2.0",
     "text-encoding": "^0.7.0"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^@deck.gl/core$": "<rootDir>/src/__mocks__/@deck.gl/core.js",
+      "^@deck.gl/layers$": "<rootDir>/src/__mocks__/@deck.gl/layers.js",
+      "^@deck.gl/mapbox$": "<rootDir>/src/__mocks__/@deck.gl/mapbox.js",
+      "^@deck.gl/react$": "<rootDir>/src/__mocks__/@deck.gl/react.js",
+      "^mapbox-gl$": "<rootDir>/src/__mocks__/mapbox-gl.js"
+    }
   }
 }
