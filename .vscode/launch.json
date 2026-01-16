@@ -2,81 +2,24 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: Current File",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${file}",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "cwd": "${workspaceFolder}"
-    },
-    {
-      "name": "Start Backend API",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "uvicorn",
-      "args": [
-        "api.main:app",
-        "--reload",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8000"
-      ],
-      "jinja": true,
-      "justMyCode": false,
-      "console": "integratedTerminal",
-      "envFile": "${workspaceFolder}/.env",
-      "cwd": "${workspaceFolder}"
-    },
-    {
       "name": "Start Frontend",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "start"
-      ],
+      "runtimeArgs": ["start"],
       "cwd": "${workspaceFolder}/frontend",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "env": {
         "BROWSER": "none"
       }
-    },
-    {
-      "name": "Debug Backend Tests",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "unittest",
-      "args": [
-        "discover",
-        "-s",
-        "tests",
-        "-p",
-        "test_*.py"
-      ],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "cwd": "${workspaceFolder}"
-    },
-    {
-      "name": "Run Simulation Script",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/execute_simulation.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "cwd": "${workspaceFolder}"
     }
   ],
   "compounds": [
     {
-      "name": "Start Full Application",
-      "configurations": [
-        "Start Backend API",
-        "Start Frontend"
-      ],
+      "name": "Full App (Rust + Frontend)",
+      "configurations": ["Start Frontend"],
+      "preLaunchTask": "cargo run (Rust API)",
       "presentation": {
         "hidden": false,
         "group": "application",

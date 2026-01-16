@@ -4,9 +4,10 @@
 // learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom';
 
-// Polyfill TextDecoder for Mapbox GL JS compatibility
-import { TextDecoder } from 'text-encoding';
+// Polyfill TextDecoder and TextEncoder for Mapbox GL JS and MessagePack compatibility
+import { TextDecoder, TextEncoder } from 'text-encoding';
 global.TextDecoder = TextDecoder;
+global.TextEncoder = TextEncoder;
 
 // Mock canvas getContext
 const mockCanvasContext = {

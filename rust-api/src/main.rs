@@ -21,8 +21,12 @@ async fn main() {
     // Create the application
     let app = create_app();
 
-    // Define the address to listen on
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8001));
+    // Define the address to listen on (default port 8000, can override with PORT env var)
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8000);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     tracing::info!("Cascabel API starting on {}", addr);
     tracing::info!("Health check available at http://{}/health", addr);

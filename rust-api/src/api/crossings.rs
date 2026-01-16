@@ -15,18 +15,42 @@ use crate::models::{
     ApiError, BorderCrossingInfo, BorderCrossingsResponse, CrossingConfig,
 };
 
-/// Path to the bounding boxes configuration file
-const BOUNDING_BOXES_PATH: &str = "cascabel/paths/bounding_boxes.json";
+/// Get the paths directory - tries multiple locations
+fn get_paths_dir() -> PathBuf {
+    // Try environment variable first
+    if let Ok(path) = std::env::var("CASCABEL_PATHS_DIR") {
+        return PathBuf::from(path);
+    }
 
-/// Path to the paths directory
-const PATHS_DIR: &str = "cascabel/paths";
+    // Possible paths to try (in order of preference)
+    let possible_paths = [
+        PathBuf::from("../cascabel/paths"),           // From rust-api/
+        PathBuf::from("cascabel/paths"),              // From project root
+        PathBuf::from("./cascabel/paths"),            // Explicit relative
+    ];
+
+    for path in &possible_paths {
+        if path.exists() {
+            return path.clone();
+        }
+    }
+
+    // Default fallback
+    PathBuf::from("../cascabel/paths")
+}
+
+/// Get the bounding boxes file path
+fn get_bounding_boxes_path() -> PathBuf {
+    get_paths_dir().join("bounding_boxes.json")
+}
 
 /// GET /border-crossings - List available border crossings
 pub async fn get_border_crossings() -> impl IntoResponse {
     let mut crossings = Vec::new();
+    let paths_dir = get_paths_dir();
 
     // Scan for GeoJSON files in the paths directory
-    match std::fs::read_dir(PATHS_DIR) {
+    match std::fs::read_dir(&paths_dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -35,18 +59,18 @@ pub async fn get_border_crossings() -> impl IntoResponse {
                     if let Ok(sub_entries) = std::fs::read_dir(&path) {
                         for sub_entry in sub_entries.flatten() {
                             let file_path = sub_entry.path();
-                            if let Some(crossing) = parse_geojson_file(&file_path, &path) {
+                            if let Some(crossing) = parse_geojson_file(&file_path, &path, &paths_dir) {
                                 crossings.push(crossing);
                             }
                         }
                     }
-                } else if let Some(crossing) = parse_geojson_file(&path, &PathBuf::from(PATHS_DIR)) {
+                } else if let Some(crossing) = parse_geojson_file(&path, &paths_dir, &paths_dir) {
                     crossings.push(crossing);
                 }
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to read paths directory: {}", e);
+            tracing::warn!("Failed to read paths directory {:?}: {}", paths_dir, e);
         }
     }
 
@@ -55,7 +79,7 @@ pub async fn get_border_crossings() -> impl IntoResponse {
 }
 
 /// Parse a GeoJSON file and extract crossing info
-fn parse_geojson_file(path: &PathBuf, _parent: &PathBuf) -> Option<BorderCrossingInfo> {
+fn parse_geojson_file(path: &PathBuf, _parent: &PathBuf, paths_dir: &PathBuf) -> Option<BorderCrossingInfo> {
     let file_name = path.file_name()?.to_str()?;
 
     // Only process .geojson files, skip copy files
@@ -74,7 +98,7 @@ fn parse_geojson_file(path: &PathBuf, _parent: &PathBuf) -> Option<BorderCrossin
     let geometry = first_feature.get("geometry");
 
     // Get direction from parent directory or properties
-    let rel_path = path.strip_prefix(PATHS_DIR).unwrap_or(path);
+    let rel_path = path.strip_prefix(paths_dir).unwrap_or(path);
     let parts: Vec<&str> = rel_path.iter()
         .filter_map(|p| p.to_str())
         .collect();
@@ -125,7 +149,7 @@ fn parse_geojson_file(path: &PathBuf, _parent: &PathBuf) -> Option<BorderCrossin
         .to_string();
 
     // Construct path relative to cascabel/paths
-    let rel_geojson_path = path.strip_prefix(PATHS_DIR)
+    let rel_geojson_path = path.strip_prefix(paths_dir)
         .map(|p| format!("cascabel/paths/{}", p.display()))
         .unwrap_or_else(|_| path.display().to_string());
 
@@ -145,8 +169,10 @@ fn parse_geojson_file(path: &PathBuf, _parent: &PathBuf) -> Option<BorderCrossin
 pub async fn get_crossing_config(
     Path(crossing_name): Path<String>,
 ) -> impl IntoResponse {
+    let bounding_boxes_path = get_bounding_boxes_path();
+
     // Load bounding_boxes.json
-    match std::fs::read_to_string(BOUNDING_BOXES_PATH) {
+    match std::fs::read_to_string(&bounding_boxes_path) {
         Ok(content) => {
             match serde_json::from_str::<HashMap<String, CrossingConfig>>(&content) {
                 Ok(all_crossings) => {
@@ -185,7 +211,8 @@ pub async fn get_crossing_config(
 pub async fn get_geojson(
     Path(path_name): Path<String>,
 ) -> impl IntoResponse {
-    let geojson_path = format!("{}/{}.geojson", PATHS_DIR, path_name);
+    let paths_dir = get_paths_dir();
+    let geojson_path = paths_dir.join(format!("{}.geojson", path_name));
 
     match std::fs::read_to_string(&geojson_path) {
         Ok(content) => {
@@ -327,13 +354,15 @@ mod tests {
     fn test_parse_geojson_file_invalid_extension() {
         let path = PathBuf::from("/tmp/test.txt");
         let parent = PathBuf::from("/tmp");
-        assert!(parse_geojson_file(&path, &parent).is_none());
+        let paths_dir = PathBuf::from("/tmp");
+        assert!(parse_geojson_file(&path, &parent, &paths_dir).is_none());
     }
 
     #[test]
     fn test_parse_geojson_file_copy_file() {
         let path = PathBuf::from("/tmp/test_copy.geojson");
         let parent = PathBuf::from("/tmp");
-        assert!(parse_geojson_file(&path, &parent).is_none());
+        let paths_dir = PathBuf::from("/tmp");
+        assert!(parse_geojson_file(&path, &parent, &paths_dir).is_none());
     }
 }

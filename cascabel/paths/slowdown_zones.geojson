@@ -1,0 +1,454 @@
+{
+  "paso_del_norte": {
+    "mx2usa": [
+      {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_01",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.487081815543,
+                31.749921411870375
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_02",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48702480949878,
+                31.749936786486074
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_03",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48698228260305,
+                31.74994678898058
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_04",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48693161225881,
+                31.749951405515958
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_05",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48688546605268,
+                31.749957560895638
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_06",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48683841501925,
+                31.749962946853373
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_07",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48679769777856,
+                31.749970641077297
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_08",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48674793226242,
+                31.74997833530057
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_09",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48670359571132,
+                31.749983721257095
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_10",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.4866411626089,
+                31.749992184901245
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "pdn_mx2usa_11",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.48659320674777,
+                31.749994493167833
+              ],
+              "type": "Point"
+            }
+          }
+        ]
+      }
+    ],
+    "usa2mx": []
+  },
+  "bridge_of_the_americas": {
+    "mx2usa": [
+      {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_01",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45138832122012,
+                31.766898672247336
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_02",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.4513298902546,
+                31.76690743892236
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_03",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45129380054021,
+                31.766898672247336
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_04",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45123365101702,
+                31.766888444457365
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_05",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.4511975613032,
+                31.766886983345046
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_06",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45113913033767,
+                31.766886983345046
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_07",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45110304062332,
+                31.766886983345046
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_08",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45102914263742,
+                31.766885522231817
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_09",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.4509947714813,
+                31.76689136668371
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_10",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45093634051578,
+                31.766892827795957
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_11",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45089681368603,
+                31.766860683309744
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_12",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45083838272052,
+                31.766857761083372
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_13",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.4507988558913,
+                31.766860683309744
+              ],
+              "type": "Point"
+            }
+          },
+          {
+            "type": "Feature",
+            "properties": {
+              "type": "booth",
+              "id": "bota_mx2usa_14",
+              "name": "Agent Inspection Booth",
+              "description": "Actual car inspection booths, the end of the journey"
+            },
+            "geometry": {
+              "coordinates": [
+                -106.45074901771483,
+                31.76685483885592
+              ],
+              "type": "Point"
+            }
+          }
+        ]
+      }
+    ],
+    "usa2mx": [
+      {
+        "type": "Feature",
+        "properties": {
+          "type": "slowdown",
+          "name": "License Plate Reader",
+          "description": "License plate readers and vehicle sensors",
+          "target_speed_mps": 1.34
+        },
+        "geometry": {
+          "coordinates": [
+            -106.4515179551682,
+            31.766957179905674
+          ],
+          "type": "Point"
+        }
+      },
+      {
+        "type": "Feature",
+        "properties": {
+          "type": "booth",
+          "name": "Agent Inspection Booth",
+          "description": "Actual car inspection booths, the end of the journey"
+        },
+        "geometry": {
+          "coordinates": [
+            -106.45192557460996,
+            31.762698674864538
+          ],
+          "type": "Point"
+        }
+      }
+    ]
+  }
+}

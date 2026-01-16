@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import Map, { Marker, Source, Layer, NavigationControl } from 'react-map-gl';
 import {
   Card,
@@ -15,8 +15,22 @@ import {
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { api, BorderCrossingConfig, SimulationConfig } from '../services/api';
 import DeckGLMap, { CarData as DeckCarData, ServiceNodeData as DeckServiceNodeData, SlowdownZone as DeckSlowdownZone } from './DeckGLMap';
+import { WebSocketClient, createWebSocketClient, ConnectionState } from '../services/websocket';
+import { decode } from '@msgpack/msgpack';
+import { parseServerMessage, isSimulationUpdate, ServerMessage } from '../services/messages';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+
+// Backend type for switching between Python (JSON) and Rust (Binary)
+type BackendType = 'python' | 'rust';
+
+// Get WebSocket URL based on backend type
+const getWsUrl = (backendType: BackendType): string => {
+  if (backendType === 'rust') {
+    return process.env.REACT_APP_RUST_WS_URL || 'ws://localhost:8000';
+  }
+  return API_BASE_URL.replace('http', 'ws');
+};
 
 interface SimulationUpdate {
   type: 'simulation_update';
@@ -74,7 +88,8 @@ const DIRECTIONS = [
 
 const FullscreenDashboard: React.FC = () => {
   const [simulationId, setSimulationId] = useState<string | null>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [wsClient, setWsClient] = useState<WebSocketClient | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [simulationData, setSimulationData] = useState<SimulationUpdate['data'] | null>(null);
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
   const [slowdownZones, setSlowdownZones] = useState<Array<{
@@ -84,6 +99,9 @@ const FullscreenDashboard: React.FC = () => {
     coordinates: [number, number];
     target_speed_mps?: number;
   }>>([]);
+
+  // Backend selection (Python JSON vs Rust Binary)
+  const [backendType, setBackendType] = useState<BackendType>('python');
 
   // Crossing and direction selection
   const [selectedCrossing, setSelectedCrossing] = useState('paso_del_norte');
@@ -183,48 +201,122 @@ const FullscreenDashboard: React.FC = () => {
     loadSlowdownZones();
   }, [selectedCrossing]);
 
-  // WebSocket connection
+  // Handle simulation update from Rust backend (binary MessagePack)
+  const handleBinarySimulationUpdate = useCallback((update: ServerMessage & { type: 'simulation_update' }) => {
+    // Convert from Rust message format to existing SimulationUpdate['data'] format
+    const data: SimulationUpdate['data'] = {
+      cars: update.cars.map(car => ({
+        id: String(car.id),
+        position: [car.position[1], car.position[0]] as [number, number], // Rust sends [lat, lon], we use [lon, lat]
+        status: (['approaching', 'queued', 'serving', 'completed'] as const)[car.status] || 'approaching',
+        velocity: car.velocity,
+        queue_id: car.queue_id ?? undefined,
+        queue_position: car.queue_position ?? undefined,
+      })),
+      queues: [], // Will be computed from service_nodes if needed
+      metrics: {
+        total_arrivals: update.metrics.total_arrivals,
+        total_completions: update.metrics.total_completions,
+        average_wait_time: update.metrics.average_wait_time,
+        simulation_time: update.metrics.simulation_time,
+      },
+      service_nodes: update.service_nodes.map(node => ({
+        node_id: node.node_id,
+        queue_id: node.queue_id,
+        is_busy: node.is_busy,
+        current_car_id: node.current_car_id ?? undefined,
+        service_rate: node.service_rate,
+        total_served: node.total_served,
+        total_service_time: 0, // Not available in Rust format
+      })),
+    };
+    setSimulationData(data);
+  }, []);
+
+  // WebSocket connection - supports both Python (JSON) and Rust (Binary MessagePack)
   useEffect(() => {
     if (!simulationId) return;
 
-    const websocket = new WebSocket(`${api.WS_BASE_URL}/ws/${simulationId}`);
+    const useBinary = backendType === 'rust';
+    const wsUrl = getWsUrl(backendType);
 
-    websocket.onopen = () => {
-      console.log('WebSocket connected');
-      setIsRunning(true);
-    };
+    console.log(`[WebSocket] Connecting to ${backendType} backend at ${wsUrl} (binary=${useBinary})`);
 
-    websocket.onmessage = (event) => {
-      try {
-        const message: SimulationUpdate = JSON.parse(event.data);
-        if (message.type === 'simulation_update') {
-          console.log('Received simulation update:', {
-            carCount: message.data.cars.length,
-            firstCar: message.data.cars[0],
-            queues: message.data.queues.length
-          });
-          setSimulationData(message.data);
+    // Create WebSocketClient for binary support
+    const client = createWebSocketClient({
+      baseUrl: wsUrl,
+      simulationId,
+      useBinary,
+      autoReconnect: true,
+    });
+
+    client.setHandlers({
+      onStateChange: (state) => {
+        console.log('[WebSocket] Connection state:', state);
+        setConnectionState(state);
+        setIsRunning(state === 'connected');
+      },
+      onSimulationUpdate: handleBinarySimulationUpdate,
+      onError: (error) => {
+        console.error('[WebSocket] Server error:', error);
+      },
+      onWebSocketError: (event) => {
+        console.error('[WebSocket] Connection error:', event);
+      },
+      // Handle raw messages for Python backend compatibility
+      onMessage: (msg) => {
+        // For Python backend, we also receive messages through onMessage
+        // This is handled by the client's internal parsing
+      },
+    });
+
+    // For Python backend, we need custom handling since it sends different format
+    if (!useBinary) {
+      // Override with traditional JSON WebSocket for Python backend
+      const ws = new WebSocket(`${wsUrl}/ws/${simulationId}`);
+
+      ws.onopen = () => {
+        console.log('[WebSocket] Python backend connected');
+        setConnectionState('connected');
+        setIsRunning(true);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message: SimulationUpdate = JSON.parse(event.data);
+          if (message.type === 'simulation_update') {
+            setSimulationData(message.data);
+          }
+        } catch (error) {
+          console.error('[WebSocket] Failed to parse JSON message:', error);
         }
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
-      }
-    };
+      };
 
-    websocket.onclose = () => {
-      console.log('WebSocket disconnected');
-      setIsRunning(false);
-    };
+      ws.onclose = () => {
+        console.log('[WebSocket] Python backend disconnected');
+        setConnectionState('disconnected');
+        setIsRunning(false);
+      };
 
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+      ws.onerror = (error) => {
+        console.error('[WebSocket] Python backend error:', error);
+        setConnectionState('error');
+      };
 
-    setWs(websocket);
+      return () => {
+        ws.close();
+      };
+    }
+
+    // Connect using binary client for Rust backend
+    client.connect();
+    setWsClient(client);
 
     return () => {
-      websocket.close();
+      client.disconnect();
+      setWsClient(null);
     };
-  }, [simulationId]);
+  }, [simulationId, backendType, handleBinarySimulationUpdate]);
 
   const handleStartSimulation = async () => {
     try {
@@ -272,7 +364,7 @@ const FullscreenDashboard: React.FC = () => {
   };
 
   const handleStopSimulation = async () => {
-    if (simulationId && ws) {
+    if (simulationId) {
       try {
         const response = await fetch(`${API_BASE_URL}/simulation/${simulationId}/stop`, {
           method: 'POST',
@@ -286,10 +378,15 @@ const FullscreenDashboard: React.FC = () => {
       } catch (error) {
         console.error('Error stopping simulation:', error);
       } finally {
-        ws.close();
+        // Disconnect WebSocket client
+        if (wsClient) {
+          wsClient.disconnect();
+          setWsClient(null);
+        }
         setSimulationId(null);
         setSimulationData(null);
         setIsRunning(false);
+        setConnectionState('disconnected');
       }
     }
   };
@@ -727,6 +824,35 @@ const FullscreenDashboard: React.FC = () => {
                   : 'Standard DOM markers - better for debugging'}
               </div>
             </div>
+
+            <FormGroup label="Backend" style={{ marginTop: '10px' }}>
+              <HTMLSelect
+                value={backendType}
+                onChange={(e) => setBackendType(e.currentTarget.value as BackendType)}
+                disabled={isRunning}
+                style={{ width: '100%' }}
+              >
+                <option value="rust">Rust (Binary) - Port 8000</option>
+              </HTMLSelect>
+              <div style={{ fontSize: '10px', color: '#5c7080', marginTop: '4px' }}>
+                {backendType === 'rust'
+                  ? 'High-performance binary protocol (~78% bandwidth savings)'
+                  : 'Standard JSON protocol (Python FastAPI)'}
+              </div>
+            </FormGroup>
+
+            {connectionState !== 'disconnected' && (
+              <div style={{
+                marginTop: '10px',
+                padding: '6px 8px',
+                backgroundColor: connectionState === 'connected' ? '#d4edda' : connectionState === 'error' ? '#f8d7da' : '#fff3cd',
+                borderRadius: '4px',
+                fontSize: '11px'
+              }}>
+                <strong>WebSocket:</strong> {connectionState}
+                {connectionState === 'reconnecting' && ' (retrying...)'}
+              </div>
+            )}
 
             <div style={{ marginTop: '10px', padding: '8px', backgroundColor: '#e8f4f8', borderRadius: '4px', fontSize: '11px', color: '#5c7080' }}>
               <strong>New System:</strong> Cars spawn in {selectedDirection === 'mx2usa' ? 'Mexico' : 'USA'},

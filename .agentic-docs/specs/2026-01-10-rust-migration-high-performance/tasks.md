@@ -70,17 +70,17 @@
   - [x] 6.8 Write performance tests verifying 60 FPS with 5000+ points
   - [x] 6.9 Verify rendering performance on mid-range GPU
 
-- [ ] 7. Implement Binary WebSocket Client in Frontend
-  - [ ] 7.1 Write tests for MessagePack message decoding
-  - [ ] 7.2 Add @msgpack/msgpack dependency to package.json
-  - [ ] 7.3 Create WebSocketClient class handling binary frames
-  - [ ] 7.4 Write tests for SimulationUpdate message parsing
-  - [ ] 7.5 Implement typed message parsing for all message types (SimulationUpdate, PositionOnlyUpdate, Error)
-  - [ ] 7.6 Write tests for reconnection with exponential backoff
-  - [ ] 7.7 Implement automatic reconnection and RequestFullState on reconnect
-  - [ ] 7.8 Write tests for control message sending (pause, resume, time speed)
-  - [ ] 7.9 Implement ControlMessage serialization and sending
-  - [ ] 7.10 Verify client handles 10Hz updates without dropped frames
+- [x] 7. Implement Binary WebSocket Client in Frontend
+  - [x] 7.1 Write tests for MessagePack message decoding
+  - [x] 7.2 Add @msgpack/msgpack dependency to package.json
+  - [x] 7.3 Create WebSocketClient class handling binary frames
+  - [x] 7.4 Write tests for SimulationUpdate message parsing
+  - [x] 7.5 Implement typed message parsing for all message types (SimulationUpdate, PositionOnlyUpdate, Error)
+  - [x] 7.6 Write tests for reconnection with exponential backoff
+  - [x] 7.7 Implement automatic reconnection and RequestFullState on reconnect
+  - [x] 7.8 Write tests for control message sending (pause, resume, time speed)
+  - [x] 7.9 Implement ControlMessage serialization and sending
+  - [x] 7.10 Verify client handles 10Hz updates without dropped frames
 
 - [ ] 8. Integration Testing and Performance Benchmarking
   - [ ] 8.1 Write end-to-end tests for simulation start, WebSocket stream, and stop

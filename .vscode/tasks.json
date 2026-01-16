@@ -2,36 +2,72 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "start-api",
+      "label": "cargo build",
+      "type": "cargo",
+      "command": "build",
+      "problemMatcher": ["$rustc"],
+      "options": {
+        "cwd": "${workspaceFolder}/rust-api"
+      },
+      "group": "build"
+    },
+    {
+      "label": "cargo build --release",
+      "type": "cargo",
+      "command": "build",
+      "args": ["--release"],
+      "problemMatcher": ["$rustc"],
+      "options": {
+        "cwd": "${workspaceFolder}/rust-api"
+      },
+      "group": "build"
+    },
+    {
+      "label": "cargo test",
+      "type": "cargo",
+      "command": "test",
+      "problemMatcher": ["$rustc"],
+      "options": {
+        "cwd": "${workspaceFolder}/rust-api"
+      },
+      "group": "test"
+    },
+    {
+      "label": "cargo run (Rust API)",
       "type": "shell",
-      "command": "python",
-      "args": [
-        "api/main.py"
-      ],
+      "command": "cargo",
+      "args": ["run", "--release"],
+      "problemMatcher": ["$rustc"],
+      "options": {
+        "cwd": "${workspaceFolder}/rust-api",
+        "env": {
+          "RUST_LOG": "info",
+          "PORT": "8000"
+        }
+      },
       "group": "build",
+      "isBackground": true,
       "presentation": {
         "echo": true,
         "reveal": "always",
         "focus": false,
-        "panel": "shared"
+        "panel": "dedicated"
       }
     },
     {
       "label": "start-frontend",
       "type": "shell",
-      "command": "cd",
-      "args": [
-        "frontend",
-        "&&",
-        "npm",
-        "start"
-      ],
+      "command": "npm",
+      "args": ["start"],
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
       "group": "build",
       "presentation": {
         "echo": true,
         "reveal": "always",
         "focus": false,
-        "panel": "shared"
+        "panel": "dedicated"
       }
     }
   ]
