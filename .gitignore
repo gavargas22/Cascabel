@@ -139,6 +139,11 @@ dmypy.json
 
 # .agentic-docs - Re-enabled for version control of specs
 # .agentic-docs
-.ipynb_checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+*-checkpoint.ipynb
 cache/
 __marimo__
+
+# Local runtime / telemetry artifacts (should not be committed)
+cascabel_telemetry.db
