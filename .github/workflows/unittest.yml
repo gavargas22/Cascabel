@@ -7,6 +7,7 @@ on:
 jobs:
   unittest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -21,4 +22,5 @@ jobs:
           pip install .
 
       - name: Run unit tests
+        timeout-minutes: 10
         run: python -m unittest discover -s tests -v
