@@ -1,9 +1,11 @@
 name: Purge telemetry DB history
 
-# One-shot: rewrite THIS branch to drop cascabel_telemetry.db from all
-# history. Does not force-push master. Trigger manually via workflow_dispatch.
+# Rewrites THIS branch only to drop cascabel_telemetry.db from history.
+# Never force-pushes master. Re-runs are no-ops once the blob is gone.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - chore/purge-telemetry-db-history
 
 permissions:
   contents: write
@@ -18,13 +20,28 @@ jobs:
         with:
           fetch-depth: 0
           ref: chore/purge-telemetry-db-history
+          persist-credentials: false
+
+      - name: Skip if already purged
+        id: check
+        run: |
+          set -euo pipefail
+          if git rev-list --objects --all | grep -F cascabel_telemetry.db; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "cascabel_telemetry.db still in history; will purge"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "Already clean; nothing to do"
+          fi
 
       - name: Install git-filter-repo
+        if: steps.check.outputs.found == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y git-filter-repo
 
       - name: Purge cascabel_telemetry.db from history
+        if: steps.check.outputs.found == 'true'
         run: |
           set -euo pipefail
           git filter-repo --path cascabel_telemetry.db --invert-paths --force
@@ -35,9 +52,11 @@ jobs:
           echo "Purge OK; tip=$(git rev-parse HEAD)"
 
       - name: Force-push rewritten branch (not master)
+        if: steps.check.outputs.found == 'true'
         env:
           BRANCH: chore/purge-telemetry-db-history
         run: |
           set -euo pipefail
+          git remote remove origin 2>/dev/null || true
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push --force origin "HEAD:refs/heads/${BRANCH}"
