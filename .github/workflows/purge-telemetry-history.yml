@@ -1,0 +1,43 @@
+name: Purge telemetry DB history
+
+# One-shot: rewrite THIS branch to drop cascabel_telemetry.db from all
+# history. Does not force-push master. Trigger manually via workflow_dispatch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: chore/purge-telemetry-db-history
+
+      - name: Install git-filter-repo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-filter-repo
+
+      - name: Purge cascabel_telemetry.db from history
+        run: |
+          set -euo pipefail
+          git filter-repo --path cascabel_telemetry.db --invert-paths --force
+          if git rev-list --objects --all | grep -F cascabel_telemetry.db; then
+            echo "ERROR: cascabel_telemetry.db still present in objects" >&2
+            exit 1
+          fi
+          echo "Purge OK; tip=$(git rev-parse HEAD)"
+
+      - name: Force-push rewritten branch (not master)
+        env:
+          BRANCH: chore/purge-telemetry-db-history
+        run: |
+          set -euo pipefail
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin "HEAD:refs/heads/${BRANCH}"
