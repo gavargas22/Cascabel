@@ -1,29 +1,34 @@
 # cascabel_telemetry.db history purge
 
-## Status (verified 2026-09-24)
+## Status (verified 2026-09-24 CT)
 
-- **Working tree / tip (`master`)**: clean — file removed in PR #6 (`c9dae88`); `.gitignore` lists `cascabel_telemetry.db`.
-- **Git history**: blobs still reachable (`git rev-list --objects --all` showed `cascabel_telemetry.db`, ~61MB and ~37MB variants) until this branch is rewritten.
+- **Working tree / tip (`master`)**: clean — file removed in PR #6; `.gitignore` lists `cascabel_telemetry.db` (hardened on this branch with `cascabel_telemetry.db*`, `*.sqlite`, `*.sqlite3`).
+- **This branch history**: **purged**. `git filter-repo --path cascabel_telemetry.db --invert-paths` was applied via Actions and force-pushed to `chore/purge-telemetry-db-history`. Verified: `git rev-list --objects --all` has **no** `cascabel_telemetry.db`.
+- **`master` history**: blobs **still reachable** (~61MB and ~37MB variants) until `master` is replaced with this tip.
 
-## This branch
+## This branch contents
 
-Branch `chore/purge-telemetry-db-history` hardens `.gitignore` and includes a **workflow_dispatch-only** workflow that runs `git filter-repo --path cascabel_telemetry.db --invert-paths` and **force-pushes this branch only** (never `master`).
+- Hardened `.gitignore` (prevents recommit of telemetry DB / sqlite sidecars).
+- Docs note (this file).
+- Optional one-shot workflow `.github/workflows/purge-telemetry-history.yml` (safe no-op when already clean).
 
 ## After CI is green — what Guillermo must do
 
-A normal merge of this PR into `master` **will not** remove the blobs from `master` history (merge keeps old commits reachable).
+A normal **merge** of this PR into `master` **will not** remove the blobs from `master` history (merge keeps old commits reachable).
 
-To finish the purge after review:
+To finish the purge after review (**force-push `master`**, do not merge-commit):
 
-1. Ensure this branch tip has rewritten history (run **Actions → Purge telemetry DB history → Run workflow** with ref `chore/purge-telemetry-db-history`, or rewrite locally with `git filter-repo`).
-2. **Force-push `master`** to the purged tip (or replace the default branch), e.g.:
-   ```bash
-   git fetch origin
-   git checkout master
-   git reset --hard origin/chore/purge-telemetry-db-history
-   git push --force-with-lease origin master
-   ```
-3. Re-fetch / reset any other long-lived branches that still contain the old objects; ask collaborators to re-clone.
-4. Optionally delete `.github/workflows/purge-telemetry-history.yml` after the one-shot succeeds.
+```bash
+git fetch origin
+git checkout master
+git reset --hard origin/chore/purge-telemetry-db-history
+git push --force-with-lease origin master
+```
+
+Then:
+
+1. Reset or delete any other long-lived branches that still contain the old objects; ask collaborators to **re-clone** (or hard-reset).
+2. Optionally delete `.github/workflows/purge-telemetry-history.yml` once `master` is purged.
+3. Confirm: `git rev-list --objects --all | grep cascabel_telemetry` prints nothing on a fresh clone of `master`.
 
 **Do not merge this PR with a merge commit if the goal is history purge** — replace `master` with the rewritten tip instead.
